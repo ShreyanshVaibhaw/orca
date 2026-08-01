@@ -84,6 +84,7 @@ import {
 } from './web-agent-session-handoff'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { publishTerminalPaneAuthorityTopologyChange } from '@/store/terminal-pane-authority-topology-events'
+import { runtimeEnvironmentStream } from './runtime-environment-stream'
 
 const WEB_SESSION_GROUP_PREFIX = 'web-session-tabs:'
 
@@ -2815,8 +2816,8 @@ export function useWebSessionTabsSync(): void {
           }
         })
 
-      void window.api.runtimeEnvironments
-        .subscribe(
+      void runtimeEnvironmentStream
+        .open(
           {
             selector: environmentId,
             method: 'session.tabs.subscribeAll',
@@ -3028,8 +3029,8 @@ export function useWebSessionTabsSync(): void {
         }).finally(() => endWebRuntimeWakeTerminalRespawn(activeWorktreeId))
       }
     }
-    void window.api.runtimeEnvironments
-      .subscribe(
+    void runtimeEnvironmentStream
+      .open(
         {
           selector: environmentId,
           method: 'session.tabs.subscribe',
