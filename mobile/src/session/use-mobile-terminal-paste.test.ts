@@ -48,8 +48,10 @@ function renderPaste(
     result: { send: { accepted: true } }
   }))
   const client = { sendRequest } as unknown as RpcClient
+  const onError = vi.fn()
   const onSuccess = vi.fn()
   const refreshCanPaste = vi.fn()
+  const showToast = vi.fn()
   let paste: (() => Promise<void>) | null = null
   let renderer: ReactTestRenderer | null = null
 
@@ -68,11 +70,11 @@ function renderPaste(
       inputScopeRef,
       sendLiveInputExternalBoundary,
       getActiveWorktreeConnectionId: async () => null,
-      onError: vi.fn(),
+      onError,
       onSuccess,
       ptyModesRef: { current: new Map<string, TerminalModes>() },
       refreshCanPaste,
-      showToast: vi.fn()
+      showToast
     })
     return null
   }
@@ -83,7 +85,7 @@ function renderPaste(
   if (!paste || !renderer) {
     throw new Error('mobile terminal paste hook did not render')
   }
-  return { onSuccess, paste, refreshCanPaste, renderer, sendRequest }
+  return { onError, onSuccess, paste, refreshCanPaste, renderer, sendRequest, showToast }
 }
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null
@@ -233,18 +235,23 @@ it.each([
 
 it('reports an ambiguous physical paste send to the live-input boundary', async () => {
   vi.mocked(Clipboard.getStringAsync).mockResolvedValue('echo uncertain\n')
-  const reportSendOutcome = vi.fn()
+  const reportSendOutcome = vi.fn(() => true)
   const reportingBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
     const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
     isBoundaryCurrent.reportSendOutcome = reportSendOutcome
     return send(isBoundaryCurrent)
   }
   const inputScopeRef = { current: 'host-a\0worktree-a' }
-  const { paste, renderer, sendRequest } = renderPaste(inputScopeRef, reportingBoundary)
+  const { onError, paste, renderer, sendRequest, showToast } = renderPaste(
+    inputScopeRef,
+    reportingBoundary
+  )
   sendRequest.mockRejectedValueOnce(markRpcDeliveryUnknown(new Error('response lost')))
 
   await paste()
 
-  expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
+  expect(reportSendOutcome).toHaveBeenCalledExactlyOnceWith('unknown')
+  expect(onError).not.toHaveBeenCalled()
+  expect(showToast).not.toHaveBeenCalled()
   act(() => renderer.unmount())
 })

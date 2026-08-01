@@ -79,10 +79,11 @@ export async function attachMobileImageToTerminal(
         getTerminalSendRpcResponseOutcome(response)
       )
     } catch (error) {
-      reportTerminalLiveInputBoundaryOutcome(
-        isBoundaryCurrent,
-        getTerminalSendRpcFailureOutcome(error)
-      )
+      const outcome = getTerminalSendRpcFailureOutcome(error)
+      reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, outcome)
+      if (outcome === 'unknown') {
+        return false
+      }
       throw error
     }
   }

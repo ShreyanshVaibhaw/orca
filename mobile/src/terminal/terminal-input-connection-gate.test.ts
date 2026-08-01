@@ -158,6 +158,7 @@ describe('session route offline-compose wiring', () => {
     expect(bufferedSend).toContain('targetHandle,')
     expect(bufferedSend).toContain('sendMobileTerminalBufferedInput({')
     expect(bufferedSend).toContain('reportTerminalLiveInputBoundaryOutcome')
+    expect(bufferedSend).not.toContain('Command delivery uncertain')
 
     const rawAccessorySend = routeSlice(
       'async function handleAccessoryKey',
@@ -184,6 +185,18 @@ describe('session route offline-compose wiring', () => {
       "useEffect(() => {\n    if (connState !== 'connected')"
     )
     expect(routeReset.match(/stopAccessoryRepeat\(\)/g)).toHaveLength(2)
+  })
+
+  it('stops accessory repeats before surfacing ambiguous input delivery', () => {
+    const unknownDelivery = routeSlice(
+      'const accessoryRepeatStopOnDeliveryUnknownRef =',
+      'const pendingActiveSessionTabIdRef ='
+    )
+    const stopIndex = unknownDelivery.indexOf('accessoryRepeatStopOnDeliveryUnknownRef.current?.()')
+    const toastIndex = unknownDelivery.indexOf("showToast('Input delivery uncertain', 2000)")
+
+    expect(stopIndex).toBeGreaterThanOrEqual(0)
+    expect(stopIndex).toBeLessThan(toastIndex)
   })
 
   it('tags terminal sends with the device presence lock only when a token exists', () => {

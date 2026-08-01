@@ -271,7 +271,7 @@ describe('attachMobileImageToTerminal', () => {
       ok('save', '/tmp/uncertain.png'),
       markRpcDeliveryUnknown(new Error('response lost'))
     ])
-    const reportSendOutcome = vi.fn()
+    const reportSendOutcome = vi.fn(() => true)
     const sendTerminalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
       const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
       isBoundaryCurrent.reportSendOutcome = reportSendOutcome
@@ -287,7 +287,7 @@ describe('attachMobileImageToTerminal', () => {
         pickImage: vi.fn().mockResolvedValue({ base64: 'FFFF' }),
         sendTerminalBoundary
       })
-    ).rejects.toThrow('response lost')
-    expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
+    ).resolves.toBe(false)
+    expect(reportSendOutcome).toHaveBeenCalledExactlyOnceWith('unknown')
   })
 })

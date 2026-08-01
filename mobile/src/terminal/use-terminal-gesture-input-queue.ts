@@ -9,7 +9,8 @@ import type { ConnectionState } from '../transport/types'
 import { sendMobileTerminalLiveInput } from './mobile-terminal-live-input-send'
 import {
   reportTerminalLiveInputBoundaryOutcome,
-  type TerminalLiveInputBoundarySender
+  type TerminalLiveInputBoundarySender,
+  type TerminalLiveInputSendOutcome
 } from './terminal-live-input-sender'
 
 type TerminalGestureInputQueue = {
@@ -95,13 +96,14 @@ export function useTerminalGestureInputQueue({
       }
 
       const flushGeneration = Symbol('terminal-gesture-input-flush')
+      let sendOutcome: TerminalLiveInputSendOutcome | null = null
       inFlightRef.current.set(handle, flushGeneration)
       try {
         await sendLiveInputExternalBoundary(handle, async (isBoundaryCurrent) => {
           if (Date.now() - queued.lastUpdatedMs > TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS) {
             return false
           }
-          const outcome = await sendMobileTerminalLiveInput({
+          sendOutcome = await sendMobileTerminalLiveInput({
             client: clientRef.current,
             connState: connStateRef.current,
             targetHandle: handle,
@@ -110,7 +112,7 @@ export function useTerminalGestureInputQueue({
             text: queued.bytes,
             deviceToken: deviceTokenRef.current
           })
-          return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, outcome)
+          return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, sendOutcome)
         })
       } catch {
         // Transient failure
@@ -119,7 +121,10 @@ export function useTerminalGestureInputQueue({
           inFlightRef.current.delete(handle)
           const next = queuesRef.current.get(handle)
           if (next) {
-            if (Date.now() - next.lastUpdatedMs > TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS) {
+            if (
+              sendOutcome === 'unknown' ||
+              Date.now() - next.lastUpdatedMs > TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS
+            ) {
               if (next.timer !== null) {
                 clearTimeout(next.timer)
               }

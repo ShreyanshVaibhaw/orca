@@ -11,17 +11,19 @@ export type TerminalLiveInputSender = (
 
 export type TerminalLiveInputBoundaryCurrent = {
   (): boolean
-  reportSendOutcome?: (outcome: TerminalLiveInputSendOutcome) => void
+  reportSendOutcome?: (outcome: TerminalLiveInputSendOutcome) => boolean
 }
 
 export function reportTerminalLiveInputBoundaryOutcome(
   isBoundaryCurrent: TerminalLiveInputBoundaryCurrent,
   outcome: TerminalLiveInputSendOutcome
 ): boolean {
-  if (!isBoundaryCurrent()) {
+  const outcomeCurrent = isBoundaryCurrent.reportSendOutcome
+    ? isBoundaryCurrent.reportSendOutcome(outcome)
+    : isBoundaryCurrent()
+  if (!outcomeCurrent || !isBoundaryCurrent()) {
     return false
   }
-  isBoundaryCurrent.reportSendOutcome?.(outcome)
   return isTerminalLiveInputSendAccepted(outcome)
 }
 

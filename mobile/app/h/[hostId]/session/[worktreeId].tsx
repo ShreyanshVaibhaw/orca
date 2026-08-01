@@ -1072,10 +1072,11 @@ export default function SessionScreen() {
     },
     [clearToastHideTimer]
   )
-  const showLiveInputDeliveryUnknown = useCallback(
-    () => showToast('Input delivery uncertain', 2000),
-    [showToast]
-  )
+  const accessoryRepeatStopOnDeliveryUnknownRef = useRef<(() => void) | null>(null)
+  const showLiveInputDeliveryUnknown = useCallback(() => {
+    accessoryRepeatStopOnDeliveryUnknownRef.current?.()
+    showToast('Input delivery uncertain', 2000)
+  }, [showToast])
   const pendingActiveSessionTabIdRef = useRef<string | null>(null)
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: remember the page id to activate its session tab once it syncs (bridge auto-activate flags only webContents, not the app-level active tab).
@@ -1131,6 +1132,14 @@ export default function SessionScreen() {
     handleAccessoryKey,
     liveInputProducerGeneration
   )
+  useLayoutEffect(() => {
+    accessoryRepeatStopOnDeliveryUnknownRef.current = stopAccessoryRepeat
+    return () => {
+      if (accessoryRepeatStopOnDeliveryUnknownRef.current === stopAccessoryRepeat) {
+        accessoryRepeatStopOnDeliveryUnknownRef.current = null
+      }
+    }
+  }, [stopAccessoryRepeat])
   const { clearTerminalGestureInputHandle, enqueueTerminalGestureInput } =
     useTerminalGestureInputQueue({
       activeHandleRef,
@@ -3025,7 +3034,7 @@ export default function SessionScreen() {
         return accepted ? 'accepted' : outcome
       },
       () => setInput((current) => mergeRejectedTerminalBufferedInput(text, current)),
-      () => showToast('Command delivery uncertain', 2000)
+      () => undefined
     )
   }
 

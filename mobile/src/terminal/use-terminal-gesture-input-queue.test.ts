@@ -167,7 +167,7 @@ describe('terminal gesture input queue', () => {
       .fn()
       .mockRejectedValue(markRpcDeliveryUnknown(new Error('response lost')))
     const client = { sendRequest } as unknown as RpcClient
-    const reportSendOutcome = vi.fn()
+    const reportSendOutcome = vi.fn(() => true)
     const boundary: TerminalLiveInputBoundarySender = (_handle, send) => {
       const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
       isBoundaryCurrent.reportSendOutcome = reportSendOutcome
@@ -179,6 +179,38 @@ describe('terminal gesture input queue', () => {
     await act(async () => vi.advanceTimersByTimeAsync(16))
 
     await vi.waitFor(() => expect(reportSendOutcome).toHaveBeenCalledWith('unknown'))
+    harness.unmount()
+  })
+
+  it('drops a gesture queued behind an ambiguous physical send', async () => {
+    vi.useFakeTimers()
+    let rejectFirst: (error: Error) => void = () => undefined
+    const firstResponse = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(() => firstResponse)
+      .mockResolvedValue(ACCEPTED_RESPONSE)
+    const client = { sendRequest } as unknown as RpcClient
+    const reportSendOutcome = vi.fn(() => true)
+    const boundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+      const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+      isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+      return send(isBoundaryCurrent)
+    }
+    const harness = createGestureQueueHarness(client, boundary)
+
+    harness.enqueue('terminal-a', 'first-gesture', 1)
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    harness.enqueue('terminal-a', 'queued-gesture', 1)
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    rejectFirst(markRpcDeliveryUnknown(new Error('response lost')))
+    await act(async () => undefined)
+    await vi.waitFor(() => expect(reportSendOutcome).toHaveBeenCalledWith('unknown'))
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+
+    expect(sendRequest).toHaveBeenCalledOnce()
     harness.unmount()
   })
 })

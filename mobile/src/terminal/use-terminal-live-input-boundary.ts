@@ -119,10 +119,14 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
           lifecycleEpoch === lifecycleEpochRef.current &&
           liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current
         isBoundaryCurrent.reportSendOutcome = (outcome) => {
+          if (!isBoundaryCurrent()) {
+            return false
+          }
           if (outcome === 'unknown' && sendOutcome !== 'unknown' && recoveryBytes === undefined) {
             onDeliveryUnknown()
           }
           sendOutcome = outcome
+          return true
         }
         return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, async () => {
           if (!isBoundaryCurrent()) {

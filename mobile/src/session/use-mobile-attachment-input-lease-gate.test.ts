@@ -1,9 +1,10 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  TerminalLiveInputBoundaryCurrent,
-  TerminalLiveInputBoundarySender
+import {
+  reportTerminalLiveInputBoundaryOutcome,
+  type TerminalLiveInputBoundaryCurrent,
+  type TerminalLiveInputBoundarySender
 } from '../terminal/terminal-live-input-sender'
 import { useMobileAttachmentInputLeaseGate } from './use-mobile-attachment-input-lease-gate'
 
@@ -89,7 +90,7 @@ describe('useMobileAttachmentInputLeaseGate', () => {
 
   it('forwards physical send outcomes through the attachment lease check', async () => {
     const refs = baseRefs()
-    const reportSendOutcome = vi.fn()
+    const reportSendOutcome = vi.fn(() => true)
     const sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
       const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
       isBoundaryCurrent.reportSendOutcome = reportSendOutcome
@@ -107,6 +108,38 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     })
 
     expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
+  })
+
+  it('reports an unknown send after the attachment lease is lost', async () => {
+    const refs = baseRefs()
+    const reportSendOutcome = vi.fn(() => true)
+    const sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+      const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+      isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+      return send(isBoundaryCurrent)
+    }
+    let resolveSend = (): void => undefined
+    const physicalSend = new Promise<void>((resolve) => {
+      resolveSend = resolve
+    })
+    const started = vi.fn()
+    const { gate } = renderGate({
+      ...refs,
+      showToast: vi.fn(),
+      sendLiveInputExternalBoundary
+    })
+    const result = gate()('terminal-1', async (isBoundaryCurrent) => {
+      started()
+      await physicalSend
+      return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, 'unknown')
+    })
+    await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+
+    refs.leaseReady.current = false
+    resolveSend()
+
+    await expect(result).resolves.toBe(false)
+    expect(reportSendOutcome).toHaveBeenCalledExactlyOnceWith('unknown')
   })
 
   it('waits out a lease-not-ready window and then sends', async () => {

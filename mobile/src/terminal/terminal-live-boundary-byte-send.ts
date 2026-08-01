@@ -33,12 +33,14 @@ export async function sendTerminalLiveBoundaryBytes({
   } catch {
     outcome = 'unknown' as const
   }
-  if (!isBoundaryCurrent()) {
+  const outcomeCurrent = isBoundaryCurrent.reportSendOutcome
+    ? isBoundaryCurrent.reportSendOutcome(outcome)
+    : isBoundaryCurrent()
+  if (!outcomeCurrent) {
     return false
   }
-  isBoundaryCurrent.reportSendOutcome?.(outcome)
   if (outcome === 'unknown') {
     onDeliveryUnknown?.()
   }
-  return outcome === 'accepted'
+  return isBoundaryCurrent() && outcome === 'accepted'
 }
