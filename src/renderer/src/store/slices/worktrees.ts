@@ -5653,7 +5653,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     if (removed.size === 0) {
       return
     }
-    const affectedWorktreeIds = Object.keys(get().tabsByWorktree)
+    let affectedWorktreeIds: string[] = []
     set((s) => {
       const repoIdsWithRemovedOwners = new Set<string>()
       const survivingRepoIds = new Set<string>()
@@ -5792,6 +5792,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           }
         }
       }
+      affectedWorktreeIds = [...removedWorktreeIds]
       const purgeState =
         removedWorktreeIds.size > 0 ? buildWorktreePurgeState(s, [...removedWorktreeIds]) : {}
 
@@ -5838,7 +5839,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           : {})
       }
     })
-    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
+    if (affectedWorktreeIds.length > 0) {
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
+    }
   },
 
   migrateWorktreeIdentity: (oldWorktreeId: string, newWorktreeId: string) => {

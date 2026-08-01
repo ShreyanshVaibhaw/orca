@@ -2769,6 +2769,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
     captureAllSleepingAgentSessions: (mode) => {
       // Why: periodic checkpoints and quit flushes both persist provider ids, but only a confirmed quit may claim quit precedence.
+      const changedPaneKeys = new Set<string>()
       set((s) => {
         const capturedAt = Date.now()
         const origin = mode === 'quit' ? ('quit' as const) : ('live' as const)
@@ -2788,6 +2789,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             const record = { ...existing, capturedAt, origin }
             if (!sleepingRecordsEquivalentIgnoringCaptureTime(existing, record)) {
               next[entry.paneKey] = record
+              changedPaneKeys.add(entry.paneKey)
               changed = true
             }
             continue
@@ -2816,18 +2818,15 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           }
           if (record && !sleepingRecordsEquivalentIgnoringCaptureTime(existing, record)) {
             next[record.paneKey] = record
+            changedPaneKeys.add(record.paneKey)
             changed = true
           }
         }
         return changed ? { sleepingAgentSessionsByPaneKey: next } : s
       })
-      publishTerminalPaneAuthorityTopologyChange({
-        worktreeIds: [
-          ...new Set(
-            Object.values(get().sleepingAgentSessionsByPaneKey).map((record) => record.worktreeId)
-          )
-        ]
-      })
+      if (changedPaneKeys.size > 0) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...changedPaneKeys] })
+      }
     },
 
     clearSleepingAgentSession: (paneKey) => clearSleepingAgentSessionsByPaneKey([paneKey]),

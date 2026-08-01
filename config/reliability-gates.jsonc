@@ -1992,7 +1992,11 @@
         },
         {
           "file": "src/renderer/src/store/slices/terminal-authority-hydration-publication.test.ts",
-          "assertions": ["publishes only known worktree identities after full and scoped hydration"]
+          "assertions": [
+            "publishes only known worktree identities after full and scoped hydration",
+            "publishes only sleeping records changed by a checkpoint and skips no-op checkpoints",
+            "publishes only worktrees actually purged from a removed runtime host"
+          ]
         },
         {
           "file": "src/renderer/src/components/terminal-pane/pty-connection.test.ts",

@@ -1,5 +1,8 @@
 import { expect, it, vi } from 'vitest'
+import { toRuntimeExecutionHostId } from '../../../../shared/execution-host'
 import type { WorkspaceSessionState } from '../../../../shared/types'
+import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
+import type { AppState } from '../types'
 import { getDefaultWorkspaceSession } from '../../../../shared/constants'
 import { onTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 import { createTestStore, makeTab, makeWorktree, seedStore } from './store-test-helpers'
@@ -45,6 +48,90 @@ it('publishes only known worktree identities after full and scoped hydration', (
       replaceWorkspaceKeys: [hydratedWorktreeId]
     })
     expect(changes).toEqual([[hydratedWorktreeId]])
+  } finally {
+    unsubscribe()
+  }
+})
+
+it('publishes only sleeping records changed by a checkpoint and skips no-op checkpoints', () => {
+  const store = createTestStore()
+  const paneKey = 'tab-agent:leaf-agent'
+  const worktreeId = 'repo1::/agent'
+  const agentEntry: AgentStatusEntry = {
+    state: 'working',
+    prompt: 'keep working',
+    updatedAt: 10,
+    stateStartedAt: 10,
+    stateHistory: [],
+    agentType: 'codex',
+    paneKey,
+    tabId: 'tab-agent',
+    worktreeId,
+    providerSession: { key: 'session_id', id: 'session-agent' }
+  }
+  seedStore(store, {
+    tabsByWorktree: {
+      [worktreeId]: [makeTab({ id: 'tab-agent', worktreeId })]
+    },
+    agentStatusByPaneKey: { [paneKey]: agentEntry }
+  } as Partial<AppState>)
+  const changes: { paneKeys?: readonly string[]; worktreeIds?: readonly string[] }[] = []
+  const unsubscribe = onTerminalPaneAuthorityTopologyChange((change) => changes.push(change))
+
+  try {
+    store.getState().captureAllSleepingAgentSessions('periodic')
+    expect(changes).toEqual([{ paneKeys: [paneKey] }])
+
+    changes.length = 0
+    store.getState().captureAllSleepingAgentSessions('periodic')
+    expect(changes).toEqual([])
+  } finally {
+    unsubscribe()
+  }
+})
+
+it('publishes only worktrees actually purged from a removed runtime host', () => {
+  const store = createTestStore()
+  const removedWorktreeId = 'repo-runtime::/removed'
+  const unrelatedWorktreeIds = Array.from(
+    { length: 100 },
+    (_, index) => `repo-local::/unrelated-${index}`
+  )
+  seedStore(store, {
+    repos: [
+      {
+        id: 'repo-runtime',
+        path: '/repo-runtime',
+        displayName: 'runtime',
+        badgeColor: '#000',
+        addedAt: 0,
+        executionHostId: toRuntimeExecutionHostId('env-removed')
+      }
+    ],
+    worktreesByRepo: {
+      'repo-runtime': [
+        makeWorktree({
+          id: removedWorktreeId,
+          repoId: 'repo-runtime',
+          hostId: toRuntimeExecutionHostId('env-removed')
+        })
+      ]
+    },
+    tabsByWorktree: Object.fromEntries(
+      [removedWorktreeId, ...unrelatedWorktreeIds].map((worktreeId) => [
+        worktreeId,
+        [makeTab({ id: `tab-${worktreeId}`, worktreeId })]
+      ])
+    )
+  })
+  const changes: string[][] = []
+  const unsubscribe = onTerminalPaneAuthorityTopologyChange((change) => {
+    changes.push([...(change.worktreeIds ?? [])])
+  })
+
+  try {
+    store.getState().purgeStaleRuntimeHostState(['env-removed'])
+    expect(changes).toEqual([[removedWorktreeId]])
   } finally {
     unsubscribe()
   }

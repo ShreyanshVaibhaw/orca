@@ -116,6 +116,8 @@ describe('createSshSlice', () => {
       deferredSshSessionIdsByTabId: {
         'tab-ssh': 'legacy-session-without-target-prefix',
         'tab-stale-encoded': toAppSshPtyId(targetId, 'pty-1'),
+        'tab-stale-last-known': 'legacy-session-found-by-relay-pty',
+        'tab-stale-retry': 'legacy-session-found-by-retry-authority',
         'tab-other': toAppSshPtyId(otherTargetId, 'pty-2')
       },
       // Why: a hydrated-but-not-yet-reconnected session for the removed target;
