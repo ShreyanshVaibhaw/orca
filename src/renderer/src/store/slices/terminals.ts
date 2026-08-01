@@ -54,6 +54,7 @@ import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
+import { publishTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-helpers'
 import { pushClosedTerminalTabSnapshot, pushRecentlyClosedTabKind } from './recently-closed-tabs'
 import { isClaudeAgent } from '@/lib/agent-status'
@@ -1493,6 +1494,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tab.id], worktreeIds: [worktreeId] })
     const shouldRecordInteraction =
       options?.recordInteraction ?? (!options?.pendingActivationSpawn && !options?.initialPtyId)
     if (shouldRecordInteraction) {
@@ -1826,6 +1828,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           : {})
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     // Why: closing a tab sweeps live and retained agent-status for it; use dropAgentStatusByTabPrefix so retention suppressors block a same-frame live→gone re-snapshot.
     // Why: Pi can leave a completed row keyed under an already-missing tab id; pass the worktree to sweep that orphan while preserving active pre-render child rows.
     get().dropAgentStatusByTabPrefix(
@@ -1868,6 +1871,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: reordered }
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
   },
 
   setTabBarOrder: (worktreeId, order) => {
@@ -1896,6 +1900,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         tabsByWorktree: { ...s.tabsByWorktree, [worktreeId]: updatedTabs }
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
   },
 
   setActiveTab: (tabId) => {
@@ -2016,6 +2021,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
       return nextState
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
   },
 
   setGeneratedTabTitleFromAgentPrompt: (paneKey, prompt, options) => {
@@ -2092,6 +2098,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           : {})
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId], paneKeys: [paneKey] })
   },
 
   clearTabLaunchAgent: (tabId) => {
@@ -2113,6 +2120,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       scheduleRuntimeGraphSync()
       return { tabsByWorktree: { ...s.tabsByWorktree, [ownerWorktreeId]: nextTabs } }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
   },
 
   setRuntimePaneTitle: (tabId, paneId, title) => {
@@ -2252,6 +2260,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       scheduleRuntimeGraphSync()
       return { tabsByWorktree: next }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     const item = Object.values(get().unifiedTabsByWorktree)
       .flat()
       .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
@@ -2268,6 +2277,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
       return { tabsByWorktree: next }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     const item = Object.values(get().unifiedTabsByWorktree)
       .flat()
       .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
@@ -2502,6 +2512,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         ...(shouldBumpSortEpoch ? { sortEpoch: s.sortEpoch + 1 } : {})
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
 
     // Why: activation spawns come from clicking a worktree, not work in it — skip the lastActivityAt stamp and sortEpoch bump; other spawn reasons still bump.
     if (worktreeId && !wasActivationSpawn && !isRemoteRuntimeMirror) {
@@ -2641,6 +2652,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         directSshLivePtyBindingByTabId: nextDirectSshLivePtyBindingByTabId
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
 
     // Bump activity on PTY exit, but skip intentional shutdowns (suppressed exits) and click-driven pane unmounts (pendingActivationSpawn).
     if (
@@ -2735,6 +2747,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
         return { suppressedPtyExitIds: next, sleepingAgentSessionsByPaneKey: nextSleeping }
       })
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: sleepingRecordKeys })
     }
 
     set((s) => ({
@@ -2747,6 +2760,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         ...sleepingAgentSessionRecords
       }
     }))
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: sleepingRecordKeys })
 
     if (expectedRuntimePtyIds.length > 0) {
       if (!runtimeEnvironmentId) {
@@ -2884,20 +2898,28 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     get().dropHibernatedAgentStatusPane(worktreeId, opts.paneKey, {
       retainedCompletionEvidence
     })
+    publishTerminalPaneAuthorityTopologyChange({
+      tabIds: [opts.tabId],
+      paneKeys: [opts.paneKey],
+      worktreeIds: [worktreeId]
+    })
   },
 
   clearDirectSshTargetPtyBindings: (targetId) => {
     let clearedCount = 0
+    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), targetId)]
     set((s) => {
       const result = clearDirectSshTerminalBindings(s, resolveDirectSshTerminalKeys(s, targetId))
       clearedCount = result.clearedCount
       return result.patch ?? s
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
     return clearedCount
   },
 
   invalidateStaleDirectSshTargetPtyBindings: (authority) => {
     let clearedCount = 0
+    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), authority.targetId)]
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, authority)) {
         return s
@@ -2910,11 +2932,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       clearedCount = result.clearedCount
       return result.patch ?? s
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
     return clearedCount
   },
 
   retryDirectSshTargetPanes: (authority, now = Date.now()) => {
     let retriedCount = 0
+    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), authority.targetId)]
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, authority)) {
         return s
@@ -2928,6 +2952,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       retriedCount = result.retriedCount
       return result.patch ?? s
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
     return retriedCount
   },
 
@@ -2962,6 +2987,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       )
       return retry.patch ? { ...settledState, ...retry.patch } : settledState
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [result.tabId] })
   },
 
   shutdownWorktreeTerminals: async (worktreeId, opts) => {
@@ -3095,6 +3121,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           pendingPtyShutdownIds: nextPending,
           suppressedPtyExitIds: nextSuppressed
         }
+      })
+      publishTerminalPaneAuthorityTopologyChange({
+        tabIds: tabs.map((tab) => tab.id),
+        worktreeIds: [worktreeId]
       })
       const failedPtyIds = exitGuardPtyIds.filter((ptyId) => !stopped.has(ptyId))
       markCommittedPtyShutdowns(stoppedPtyIds)
@@ -3381,6 +3411,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     markCommittedPtyShutdowns(settledPtyIds)
     settleDeferredPtyShutdownExits(settledPtyIds, 'committed')
     clearCommittedPtyShutdownSettlements(settledPtyIds)
+    publishTerminalPaneAuthorityTopologyChange({
+      tabIds: tabs.map((tab) => tab.id),
+      worktreeIds: [worktreeId]
+    })
   },
 
   consumeSuppressedPtyExit: (ptyId) => {
@@ -3583,6 +3617,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
       return { terminalLayoutsByTabId: next }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     transferNormalizedTerminalLayoutPtyOwnership(get(), tabId, ownershipTransfers)
   },
 
@@ -3652,6 +3687,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       fromPaneKey: sourcePaneKey,
       toPaneKey: targetPaneKey,
       ptyId: detachedPtyId
+    })
+    publishTerminalPaneAuthorityTopologyChange({
+      tabIds: [sourceTabId, targetTabId],
+      paneKeys: [sourcePaneKey, targetPaneKey]
     })
   },
 
@@ -3783,6 +3822,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   },
 
   hydrateWorkspaceSession: (session, options) => {
+    const affectedWorktreeIds = options?.replaceWorkspaceKeys ?? [
+      ...new Set([
+        ...Object.keys(get().tabsByWorktree),
+        ...Object.keys(session.tabsByWorktree),
+        ...Object.values(get().sleepingAgentSessionsByPaneKey).map((record) => record.worktreeId),
+        ...Object.values(session.sleepingAgentSessionsByPaneKey ?? {}).map(
+          (record) => record.worktreeId
+        )
+      ])
+    ]
     const ownershipTransferTabIds = options?.replaceWorkspaceKeys
       ? new Set(
           options.replaceWorkspaceKeys.flatMap((workspaceKey) =>
@@ -4077,6 +4126,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     for (const [tabId, transfers] of ownershipTransfersByTabId) {
       transferNormalizedTerminalLayoutPtyOwnership(get(), tabId, transfers)
     }
+    publishTerminalPaneAuthorityTopologyChange({
+      worktreeIds: affectedWorktreeIds
+    })
   },
 
   reconnectPersistedTerminals: async (signal, options) => {
@@ -4253,5 +4305,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       pendingReconnectPtyIdByTabId: remainingReconnectPtyIdByTabId,
       deferredSshSessionIdsByTabId
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [...scopedTabIds] })
   }
 })

@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { publishTerminalPaneAuthorityTopologyChange } from '@/store/terminal-pane-authority-topology-events'
 
 const storeHarness = vi.hoisted(() => {
   let state: Record<string, unknown>
@@ -31,7 +32,7 @@ vi.mock('@/store', () => ({
   }
 }))
 
-it('routes 100 unknown panes through one store and authority subscription', async () => {
+it('routes 100 unknown panes through one exact authority subscription', async () => {
   const tabs = Object.fromEntries(
     Array.from({ length: 100 }, (_, index) => [
       `wt-${index}`,
@@ -90,7 +91,7 @@ it('routes 100 unknown panes through one store and authority subscription', asyn
     })
   })
 
-  expect(storeHarness.subscribe).toHaveBeenCalledOnce()
+  expect(storeHarness.subscribe).not.toHaveBeenCalled()
   expect(onLivenessAuthorityChanged).toHaveBeenCalledOnce()
   authorityChanged?.({ id: 'unrelated-pty', generation: 1 })
   expect(recoveries.every((recover) => recover.mock.calls.length === 0)).toBe(true)
@@ -107,17 +108,15 @@ it('routes 100 unknown panes through one store and authority subscription', asyn
       'tab-unrelated': ['unrelated-pty']
     }
   }
-  for (const subscriber of storeHarness.subscribers) {
-    subscriber(storeHarness.state as never, previousState as never)
-  }
+  publishTerminalPaneAuthorityTopologyChange({ tabIds: ['tab-unrelated'] })
   expect(recoveries.filter((recover) => recover.mock.calls.length > 0)).toHaveLength(1)
 
   disposals.forEach((dispose) => dispose())
-  expect(storeHarness.unsubscribeStore).toHaveBeenCalledOnce()
+  expect(storeHarness.unsubscribeStore).not.toHaveBeenCalled()
   expect(unsubscribeAuthority).toHaveBeenCalledOnce()
 })
 
-it('coalesces a synchronous 100-pane hydration burst into one exact registration scan', async () => {
+it('routes paced 100-pane hydration through exact tab indexes', async () => {
   storeHarness.subscribe.mockClear()
   storeHarness.unsubscribeStore.mockClear()
   const tabs = Object.fromEntries(
@@ -178,43 +177,33 @@ it('coalesces a synchronous 100-pane hydration burst into one exact registration
   })
 
   let hydratedPtyIds = storeHarness.state.ptyIdsByTabId as Record<string, string[]>
-  let finalMapReads = 0
+  let mapReads = 0
   for (let index = 0; index < 100; index++) {
     const previousState = storeHarness.state
     hydratedPtyIds = { ...hydratedPtyIds, [`tab-${index}`]: [`pty-${index}`] }
-    const ptyIdsByTabId =
-      index === 99
-        ? new Proxy(hydratedPtyIds, {
-            get(target, property, receiver) {
-              if (typeof property === 'string' && property.startsWith('tab-')) {
-                finalMapReads += 1
-              }
-              return Reflect.get(target, property, receiver)
-            }
-          })
-        : hydratedPtyIds
+    const ptyIdsByTabId = new Proxy(hydratedPtyIds, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && property.startsWith('tab-')) {
+          mapReads += 1
+        }
+        return Reflect.get(target, property, receiver)
+      }
+    })
     storeHarness.state = { ...previousState, ptyIdsByTabId }
-    for (const subscriber of storeHarness.subscribers) {
-      subscriber(storeHarness.state as never, previousState as never)
-    }
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [`tab-${index}`] })
+    await Promise.resolve()
   }
-  authorityChanged?.({ id: 'pty-42', generation: 1 })
-
-  expect(recoveries[42]).toHaveBeenCalledOnce()
-  expect(
-    recoveries.filter((recover, index) => index !== 42 && recover.mock.calls.length > 0)
-  ).toHaveLength(0)
-
-  await Promise.resolve()
 
   expect(recoveries.every((recover) => recover.mock.calls.length === 1)).toBe(true)
-  expect(finalMapReads).toBe(99)
+  expect(mapReads).toBe(100)
+  authorityChanged?.({ id: 'pty-42', generation: 1 })
+  expect(recoveries[42]).toHaveBeenCalledOnce()
   disposals.forEach((dispose) => dispose())
-  expect(storeHarness.unsubscribeStore).toHaveBeenCalledOnce()
+  expect(storeHarness.unsubscribeStore).not.toHaveBeenCalled()
   expect(unsubscribeAuthority).toHaveBeenCalledOnce()
 })
 
-it('drops a queued topology drain when every registration is disposed', async () => {
+it('ignores a targeted topology event after the registration is disposed', async () => {
   storeHarness.subscribe.mockClear()
   storeHarness.unsubscribeStore.mockClear()
   storeHarness.state = {
@@ -253,14 +242,11 @@ it('drops a queued topology drain when every registration is disposed', async ()
     ...previousState,
     ptyIdsByTabId: { 'tab-1': ['pty-1'] }
   }
-  for (const subscriber of storeHarness.subscribers) {
-    subscriber(storeHarness.state as never, previousState as never)
-  }
+  publishTerminalPaneAuthorityTopologyChange({ tabIds: ['tab-1'] })
   dispose()
-
   await Promise.resolve()
 
   expect(recover).not.toHaveBeenCalled()
-  expect(storeHarness.unsubscribeStore).toHaveBeenCalledOnce()
+  expect(storeHarness.unsubscribeStore).not.toHaveBeenCalled()
   expect(unsubscribeAuthority).toHaveBeenCalledOnce()
 })

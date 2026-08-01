@@ -1,4 +1,8 @@
 import { useAppStore } from '@/store'
+import {
+  onTerminalPaneAuthorityTopologyChange,
+  type TerminalPaneAuthorityTopologyChange
+} from '@/store/terminal-pane-authority-topology-events'
 
 type AppStoreState = ReturnType<typeof useAppStore.getState>
 
@@ -22,11 +26,14 @@ type AuthorityRecoveryRegistration = {
 
 const registrations = new Set<AuthorityRecoveryRegistration>()
 const registrationsByPtyId = new Map<string, Set<AuthorityRecoveryRegistration>>()
-let unsubscribeStore: (() => void) | null = null
+const registrationsByTabId = new Map<string, Set<AuthorityRecoveryRegistration>>()
+const registrationsByPaneKey = new Map<string, Set<AuthorityRecoveryRegistration>>()
+const registrationsByWorktreeId = new Map<string, Set<AuthorityRecoveryRegistration>>()
+let unsubscribeTopology: (() => void) | null = null
 let unsubscribeAuthority: (() => void) | null = null
-let storeSubscriptionEpoch = 0
-let queuedTopologyState: { epoch: number; state: AppStoreState } | null = null
+let topologySubscriptionEpoch = 0
 let topologyDrainQueued = false
+const queuedTopologyRegistrations = new Set<AuthorityRecoveryRegistration>()
 
 function addToIndex(
   index: Map<string, Set<AuthorityRecoveryRegistration>>,
@@ -54,11 +61,13 @@ function stopSubscriptionsIfIdle(): void {
   if (registrations.size > 0) {
     return
   }
-  unsubscribeStore?.()
+  unsubscribeTopology?.()
   unsubscribeAuthority?.()
-  unsubscribeStore = null
+  unsubscribeTopology = null
   unsubscribeAuthority = null
-  storeSubscriptionEpoch += 1
+  queuedTopologyRegistrations.clear()
+  topologyDrainQueued = false
+  topologySubscriptionEpoch += 1
 }
 
 function removeRegistration(registration: AuthorityRecoveryRegistration): void {
@@ -67,7 +76,11 @@ function removeRegistration(registration: AuthorityRecoveryRegistration): void {
   }
   registration.active = false
   registrations.delete(registration)
+  queuedTopologyRegistrations.delete(registration)
   removeFromIndex(registrationsByPtyId, registration.ptyId, registration)
+  removeFromIndex(registrationsByTabId, registration.tabId, registration)
+  removeFromIndex(registrationsByPaneKey, registration.paneKey, registration)
+  removeFromIndex(registrationsByWorktreeId, registration.worktreeId, registration)
   stopSubscriptionsIfIdle()
 }
 
@@ -113,21 +126,36 @@ function recoverRegistration(registration: AuthorityRecoveryRegistration): void 
   registration.recover()
 }
 
-function queueTopologyDrain(state: AppStoreState, epoch: number): void {
-  queuedTopologyState = { epoch, state }
-  if (topologyDrainQueued) {
+function addIndexedCandidates(
+  index: Map<string, Set<AuthorityRecoveryRegistration>>,
+  keys: readonly string[] | undefined
+): void {
+  for (const key of keys ?? []) {
+    for (const registration of index.get(key) ?? []) {
+      queuedTopologyRegistrations.add(registration)
+    }
+  }
+}
+
+function queueTopologyCandidates(change: TerminalPaneAuthorityTopologyChange): void {
+  addIndexedCandidates(registrationsByTabId, change.tabIds)
+  addIndexedCandidates(registrationsByPaneKey, change.paneKeys)
+  addIndexedCandidates(registrationsByWorktreeId, change.worktreeIds)
+  if (topologyDrainQueued || queuedTopologyRegistrations.size === 0) {
     return
   }
   topologyDrainQueued = true
+  const epoch = topologySubscriptionEpoch
   queueMicrotask(() => {
-    topologyDrainQueued = false
-    const queued = queuedTopologyState
-    queuedTopologyState = null
-    if (!queued || queued.epoch !== storeSubscriptionEpoch || registrations.size === 0) {
+    if (epoch !== topologySubscriptionEpoch) {
       return
     }
-    for (const registration of registrations) {
-      if (topologyChanged(registration, queued.state)) {
+    topologyDrainQueued = false
+    const candidates = [...queuedTopologyRegistrations]
+    queuedTopologyRegistrations.clear()
+    const state = useAppStore.getState()
+    for (const registration of candidates) {
+      if (topologyChanged(registration, state)) {
         recoverRegistration(registration)
       }
     }
@@ -135,19 +163,7 @@ function queueTopologyDrain(state: AppStoreState, epoch: number): void {
 }
 
 function ensureSubscriptions(): void {
-  if (!unsubscribeStore) {
-    const epoch = ++storeSubscriptionEpoch
-    unsubscribeStore = useAppStore.subscribe((state, previousState) => {
-      if (
-        state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
-        state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId ||
-        state.tabsByWorktree !== previousState.tabsByWorktree ||
-        state.sleepingAgentSessionsByPaneKey !== previousState.sleepingAgentSessionsByPaneKey
-      ) {
-        queueTopologyDrain(state, epoch)
-      }
-    })
-  }
+  unsubscribeTopology ??= onTerminalPaneAuthorityTopologyChange(queueTopologyCandidates)
   unsubscribeAuthority ??=
     window.api.pty.onLivenessAuthorityChanged?.((payload) => {
       for (const registration of registrationsByPtyId.get(payload.id) ?? []) {
@@ -176,6 +192,9 @@ export function waitForTerminalPaneAuthorityChange(args: {
   }
   registrations.add(registration)
   addToIndex(registrationsByPtyId, args.ptyId, registration)
+  addToIndex(registrationsByTabId, args.tabId, registration)
+  addToIndex(registrationsByPaneKey, args.paneKey, registration)
+  addToIndex(registrationsByWorktreeId, args.worktreeId, registration)
   ensureSubscriptions()
 
   if (

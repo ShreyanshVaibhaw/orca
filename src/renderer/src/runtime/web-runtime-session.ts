@@ -614,11 +614,14 @@ export async function refreshWebRuntimeSessionTabsSnapshot(
     if (getRuntimeEnvironmentRevision(environmentId) !== expectedEnvironmentPairingRevision) {
       return
     }
-    applyWebSessionTabsStorePatch((state) => {
-      // Why: eager refreshes can resolve after the user switched worktrees; update tabs without stealing focus.
-      const patch = applyFreshWebSessionTabsSnapshot(state, snapshot, environmentId)
-      return patch === state ? state : patch
-    })
+    applyWebSessionTabsStorePatch(
+      (state) => {
+        // Why: eager refreshes can resolve after the user switched worktrees; update tabs without stealing focus.
+        const patch = applyFreshWebSessionTabsSnapshot(state, snapshot, environmentId)
+        return patch === state ? state : patch
+      },
+      [snapshot.worktree]
+    )
   } catch (error) {
     // Why: host creation already succeeded; the long-lived session.tabs subscription catches up if this eager refresh fails.
     console.warn(

@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import type { StateCreator, StoreApi } from 'zustand'
 import type { AppState } from '../types'
+import { publishTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 import type {
   DetectedWorktreeListResult,
   LocalBaseRefRefreshResult,
@@ -2868,6 +2869,7 @@ function mergeFetchedWorktrees(
   args: FencedWorktreeMergeArgs
 ): boolean {
   let admitted = false
+  let removedWorktreeIds: string[] = []
   set((s) => {
     if (
       !isCurrentDetectedWorktreeRefresh(s, args.refresh) ||
@@ -2931,6 +2933,7 @@ function mergeFetchedWorktrees(
             args.refresh.result,
             args.hostId
           )
+    removedWorktreeIds = removedIds
     const worktreesChanged = !areWorktreesEqual(s.worktreesByRepo[args.repoId], mergedWorktrees)
     const detectedChanged = !areDetectedWorktreeResultsEqual(
       s.detectedWorktreesByRepo[args.repoId],
@@ -2960,6 +2963,7 @@ function mergeFetchedWorktrees(
       ...(removedIds.length > 0 ? buildWorktreePurgeState(s, removedIds) : {})
     }
   })
+  publishTerminalPaneAuthorityTopologyChange({ worktreeIds: removedWorktreeIds })
   return admitted
 }
 
@@ -4313,6 +4317,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           sortEpoch: s.sortEpoch + 1
         }
       })
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
       get().removeWorkspaceSpaceWorktrees?.([worktreeId])
       // Why: PR/commit-message generation records are keyed by worktree; prune to the surviving set so they don't leak.
       const liveWorktreeKeys = new Set(
@@ -5161,6 +5166,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   remountTerminalTabForRecovery: (tabId) => {
     let remounted = false
+    let owningWorktreeId: string | null = null
     set((s) => {
       for (const [worktreeId, tabs] of Object.entries(s.tabsByWorktree)) {
         const index = tabs.findIndex((tab) => tab.id === tabId)
@@ -5179,6 +5185,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           )
         }
         remounted = true
+        owningWorktreeId = worktreeId
         return {
           tabsByWorktree: {
             ...s.tabsByWorktree,
@@ -5187,6 +5194,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
       }
       return {}
+    })
+    publishTerminalPaneAuthorityTopologyChange({
+      tabIds: [tabId],
+      ...(owningWorktreeId ? { worktreeIds: [owningWorktreeId] } : {})
     })
     return remounted
   },
@@ -5428,6 +5439,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...tabsByWorktreeUpdate
       }
     })
+    if (worktreeId) {
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
+    }
 
     if (worktreeId && shouldPrepareTerminalTabs) {
       const prepareTerminalTabs = (): void => {
@@ -5458,6 +5472,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             }
           }
         })
+        publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
       }
 
       const cancelExistingPrep = pendingActivationTerminalPrepCancels.get(worktreeId)
@@ -5630,6 +5645,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
     set((s) => buildWorktreePurgeState(s, purgeableWorktreeIds))
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: purgeableWorktreeIds })
   },
 
   purgeStaleRuntimeHostState: (removedEnvironmentIds) => {
@@ -5637,6 +5653,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     if (removed.size === 0) {
       return
     }
+    const affectedWorktreeIds = Object.keys(get().tabsByWorktree)
     set((s) => {
       const repoIdsWithRemovedOwners = new Set<string>()
       const survivingRepoIds = new Set<string>()
@@ -5821,6 +5838,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           : {})
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
   },
 
   migrateWorktreeIdentity: (oldWorktreeId: string, newWorktreeId: string) => {
@@ -5830,6 +5848,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     // Why: invalidate pre-rename toast actions before publishing the new path, carrying the dismissal forward.
     migrateHugeRepoWarningDismissal(oldWorktreeId, newWorktreeId)
     set((s) => buildWorktreeRenameState(s, oldWorktreeId, newWorktreeId))
+    publishTerminalPaneAuthorityTopologyChange({
+      worktreeIds: [oldWorktreeId, newWorktreeId]
+    })
     migrateHostedReviewLinkMutationGeneration(oldWorktreeId, newWorktreeId)
   }
 })

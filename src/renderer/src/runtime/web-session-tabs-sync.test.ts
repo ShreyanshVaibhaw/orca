@@ -31,6 +31,7 @@ import {
   _getWebSessionTabsTrackingCountsForTest,
   acceptReplayedWebSessionTabsSnapshot,
   applyFreshWebSessionTabsSnapshot,
+  applyWebSessionTabsStorePatch,
   applyWebSessionTabsSnapshot,
   applyWebSessionTabsSnapshots,
   clearWebSessionTabsTrackingForEnvironment,
@@ -43,6 +44,8 @@ import {
   shouldSyncRuntimeSessionTabs,
   type WebSessionTabsSyncState
 } from './web-session-tabs-sync'
+import { useAppStore } from '../store'
+import { onTerminalPaneAuthorityTopologyChange } from '../store/terminal-pane-authority-topology-events'
 
 vi.mock('../store', () => ({
   useAppStore: {
@@ -105,6 +108,24 @@ function makeSnapshot(
     ...overrides
   }
 }
+
+it('publishes only affected runtime worktrees after the store commit', () => {
+  const order: string[] = []
+  vi.mocked(useAppStore.setState).mockImplementationOnce(() => {
+    order.push('commit')
+  })
+  const unsubscribe = onTerminalPaneAuthorityTopologyChange((change) => {
+    order.push(`publish:${(change.worktreeIds ?? []).join(',')}`)
+  })
+
+  try {
+    applyWebSessionTabsStorePatch((state) => state, ['wt-target'])
+  } finally {
+    unsubscribe()
+  }
+
+  expect(order).toEqual(['commit', 'publish:wt-target'])
+})
 
 describe('applyWebSessionTabsSnapshot', () => {
   beforeEach(() => {

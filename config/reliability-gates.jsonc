@@ -1924,7 +1924,7 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh", "remote-runtime"],
-      "coverageNotes": "Deterministic renderer coverage includes a missing-topology hydration barrier, preserved-pane targeting while the PTY mirror is empty, local eager-buffer adoption without a hydrated renderer mirror, exact host true/false/unknown liveness with topology- and host-authority-generation retry, paired-runtime exact raw-PTY adjudication through typed unknown/missing results and an advertised confirmed-death capability, fresh client-event ready barriers, exact record/topology generations, stale-dispatch and paired-pane lifecycle fencing, one linear scan for a synchronous one-hundred-pane hydration burst, singleton exact authority routing, oldest-first late and concurrent same-provider alias arbitration, unrelated-worktree isolation, bounded provider-claim indexing, and probe/resume PTY cleanup without throwaway scrollback replay. SSH probes coalesce per exact identity and fence retirement, ID reuse, provider replacement, and IPC publication; untracked authority tombstones expire and purge with their provider. A Docker SSH renderer-reload run preserves six PTY identities and proves reattached input/output. Physical Linux, Windows, WSL, and SSH-host runs remain gaps.",
+      "coverageNotes": "Deterministic renderer coverage includes a missing-topology hydration barrier, preserved-pane targeting while the PTY mirror is empty, local eager-buffer adoption without a hydrated renderer mirror, exact host true/false/unknown liveness with topology- and host-authority-generation retry, paired-runtime exact raw-PTY adjudication through typed unknown/missing results and an advertised confirmed-death capability, fresh client-event ready barriers, exact record/topology generations, stale-dispatch and paired-pane lifecycle fencing, one exact candidate check per paced pane across one hundred topology publications, singleton exact authority routing, oldest-first late and concurrent same-provider alias arbitration, unrelated-worktree isolation, bounded provider-claim indexing, and probe/resume PTY cleanup without throwaway scrollback replay. SSH probes coalesce per exact identity and fence retirement, ID reuse, provider replacement, and IPC publication; untracked authority tombstones expire and purge with their provider. A Docker SSH renderer-reload run preserves six PTY identities and proves reattached input/output. Physical Linux, Windows, WSL, and SSH-host runs remain gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6800",
         "https://github.com/stablyai/orca/pull/5240",
@@ -1932,14 +1932,14 @@
         "https://github.com/stablyai/orca/pull/6833"
       ],
       "invariant": "Workspace activation, launch, restore, sleep, hibernate, dedupe, clearing, graph hydration, and reconnect code must not replay or resume a provider session id already owned, queued, pending, or live in that workspace. Unknown PTY liveness retains the original recovery placement until its transport resolves host authority.",
-      "oracle": "The hydration oracle starts with an origin-live Codex pane absent from renderer topology and requires zero launches until exact tab/leaf/PTY topology appears, then one targeted mount of the original tab with unrelated state unchanged. Synchronous hydration of one hundred claims coalesces into one targeted linear pass without global PTY/layout enumeration, and an unrelated tab-title transition also enumerates neither map. Record replacement and removal re-arbitrate exact provider claims without pane-key suppression; stale queued topology and paired pane-resolution lifecycles cannot consume or overwrite newer waits. Product connection contracts require local/daemon/SSH probes to query one exact PTY and distinguish live, dead, and unknown; unknown waits for a relevant topology or exact host-authority generation before one original-pane retry; late probe completion cannot retain a disposed pane; eager host buffers and paired-runtime panes must reattach while the renderer mirror is empty; paired hosts must probe the persisted raw PTY and reject replacement PTYs at matching coordinates; raw paired-host identities never consult viewer-local liveness or fall through to generic create; only exact host-authoritative death may resume; probe failures and legacy runtimes preserve ownership; late or concurrent aliases re-arbitrate after confirmed death; untracked SSH authority generations expire and purge on unregister; and discarded cold-restore probes replay no bytes before the resumed PTY becomes the sole binding. Real headed/headless and Docker SSH runs provide the cross-boundary PTY identity and input/output proof.",
+      "oracle": "The hydration oracle starts with an origin-live Codex pane absent from renderer topology and requires zero launches until exact tab/leaf/PTY topology appears, then one targeted mount of the original tab with unrelated state unchanged. One hundred paced topology publications perform exactly one candidate check each, unrelated identities perform zero checks, and full, scoped, and paired-runtime hydration publish only known worktree identities after committed state writes. Record replacement and removal re-arbitrate exact provider claims without pane-key suppression; disposed queued topology and paired pane-resolution lifecycles cannot consume or overwrite newer waits. Product connection contracts require local/daemon/SSH probes to query one exact PTY and distinguish live, dead, and unknown; unknown waits for a relevant topology or exact host-authority generation before one original-pane retry; late probe completion cannot retain a disposed pane; eager host buffers and paired-runtime panes must reattach while the renderer mirror is empty; paired hosts must probe the persisted raw PTY and reject replacement PTYs at matching coordinates; raw paired-host identities never consult viewer-local liveness or fall through to generic create; only exact host-authoritative death may resume; probe failures and legacy runtimes preserve ownership; late or concurrent aliases re-arbitrate after confirmed death; untracked SSH authority generations expire and purge on unregister; and discarded cold-restore probes replay no bytes before the resumed PTY becomes the sole binding. Real headed/headless and Docker SSH runs provide the cross-boundary PTY identity and input/output proof.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/live-agent-resume-hydration-race.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts src/main/daemon/daemon-pty-adapter.test.ts src/main/daemon/daemon-pty-router.test.ts src/main/daemon/degraded-daemon-pty-provider.test.ts src/main/providers/ssh-pty-liveness.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-pane-authority-recovery.test.ts src/renderer/src/runtime/runtime-terminal-authority-events.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-capability-check-coalescing.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-pane-authority-recovery.test.ts src/renderer/src/store/slices/terminal-authority-hydration-publication.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts src/renderer/src/runtime/runtime-terminal-authority-events.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-capability-check-coalescing.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/hooks/useIpcEvents.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-transport.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/sleeping-agent-provider-claim-index.test.ts",
@@ -1958,6 +1958,8 @@
         "src/main/providers/ssh-pty-liveness.test.ts",
         "src/main/runtime/orca-runtime.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-pane-authority-recovery.test.ts",
+        "src/renderer/src/store/slices/terminal-authority-hydration-publication.test.ts",
+        "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
         "src/renderer/src/runtime/runtime-terminal-authority-events.test.ts",
         "src/renderer/src/runtime/runtime-client-events.test.ts",
         "src/renderer/src/runtime/runtime-capability-check-coalescing.test.ts",
@@ -1987,6 +1989,10 @@
         {
           "file": "src/renderer/src/lib/sleeping-agent-recovery-topology.test.ts",
           "assertions": ["does not let a queued hydration consume a later reconnect wait"]
+        },
+        {
+          "file": "src/renderer/src/store/slices/terminal-authority-hydration-publication.test.ts",
+          "assertions": ["publishes only known worktree identities after full and scoped hydration"]
         },
         {
           "file": "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
@@ -2089,9 +2095,9 @@
         {
           "file": "src/renderer/src/components/terminal-pane/terminal-pane-authority-recovery.test.ts",
           "assertions": [
-            "routes 100 unknown panes through one store and authority subscription",
-            "coalesces a synchronous 100-pane hydration burst into one exact registration scan",
-            "drops a queued topology drain when every registration is disposed"
+            "routes 100 unknown panes through one exact authority subscription",
+            "routes paced 100-pane hydration through exact tab indexes",
+            "ignores a targeted topology event after the registration is disposed"
           ]
         },
         {
@@ -2382,6 +2388,7 @@
         {
           "file": "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
           "assertions": [
+            "publishes only affected runtime worktrees after the store commit",
             "only an exact structured-create handoff retires its provisional tab",
             "an absent host tab retires its exact provisional handoff only after a causally post-create snapshot while unrelated tabs remain",
             "adopted split sessions focus the exact requested leaf, preserve expanded-leaf state, and retain intent when a sibling publishes first"

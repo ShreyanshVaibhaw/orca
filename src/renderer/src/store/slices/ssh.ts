@@ -11,6 +11,7 @@ import {
   sshConnectionStatesEqual,
   sshTargetLabelsEqual
 } from './ssh-target-cleanup'
+import { publishTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 
 export type RemoteWorkspaceSyncStatus = {
   phase: 'idle' | 'pulling' | 'pushing' | 'synced' | 'conflict' | 'error' | 'offline'
@@ -133,8 +134,15 @@ export const createSshSlice: StateCreator<AppState, [], [], SshSlice> = (set) =>
         sshTargetsHydrated: true
       }
     }),
-  clearRemovedSshTargetState: (targetId) =>
-    set((s) => buildRemovedSshTargetCleanupPatch(s, targetId) ?? s),
+  clearRemovedSshTargetState: (targetId) => {
+    let tabIds: string[] = []
+    set((s) => {
+      const cleanup = buildRemovedSshTargetCleanupPatch(s, targetId)
+      tabIds = cleanup?.tabIds ?? []
+      return cleanup?.patch ?? s
+    })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds })
+  },
   markRemoteWorkspaceHydrated: (targetId) =>
     set((s) => {
       const next = new Set(s.remoteWorkspaceHydratedTargetIds)

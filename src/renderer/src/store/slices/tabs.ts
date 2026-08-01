@@ -44,6 +44,7 @@ import {
   buildValidWorktreeIdsForSessionHydration,
   collectPersistedWorktreeIdsForSessionHydration
 } from './degraded-repo-worktree-validity'
+import { publishTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 
 export type TabSplitDirection = 'left' | 'right' | 'up' | 'down'
 
@@ -1153,6 +1154,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
         }
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     mirrorTabPinnedToHost(get(), tabId, true)
     if (exists) {
       get().recordFeatureInteraction?.('terminal-tabs')
@@ -1190,6 +1192,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
         }
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ tabIds: [tabId] })
     mirrorTabPinnedToHost(get(), tabId, false)
     if (exists) {
       get().recordFeatureInteraction?.('terminal-tabs')
@@ -2001,6 +2004,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
             : {})
         }
       })
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
     }
 
     const activeRenderableTabId =

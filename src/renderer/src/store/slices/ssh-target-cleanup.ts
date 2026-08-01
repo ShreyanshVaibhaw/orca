@@ -49,6 +49,38 @@ function collectSshTargetTerminalTabIds(state: AppState, targetId: string): Set<
       }
     }
   }
+  for (const tabs of Object.values(state.tabsByWorktree)) {
+    for (const tab of tabs) {
+      const ptyIds = [
+        ...(state.ptyIdsByTabId[tab.id] ?? []),
+        ...(tab.ptyId ? [tab.ptyId] : []),
+        ...(state.lastKnownRelayPtyIdByTabId[tab.id]
+          ? [state.lastKnownRelayPtyIdByTabId[tab.id]]
+          : [])
+      ]
+      if (ptyIds.some((ptyId) => parseAppSshPtyId(ptyId)?.connectionId === targetId)) {
+        tabIds.add(tab.id)
+      }
+    }
+  }
+  for (const sessions of [state.deferredSshSessionIdsByTabId, state.pendingReconnectPtyIdByTabId]) {
+    for (const [tabId, sessionId] of Object.entries(sessions)) {
+      if (parseAppSshPtyId(sessionId)?.connectionId === targetId) {
+        tabIds.add(tabId)
+      }
+    }
+  }
+  for (const entries of [
+    state.directSshPaneRetryByTabId,
+    state.directSshLivePtyBindingByTabId,
+    state.directSshPaneRetryHistoryByTabId
+  ]) {
+    for (const [tabId, entry] of Object.entries(entries)) {
+      if (entry.authority.targetId === targetId) {
+        tabIds.add(tabId)
+      }
+    }
+  }
   return tabIds
 }
 
@@ -170,7 +202,7 @@ function clearSshTargetTabPtyState(
 export function buildRemovedSshTargetCleanupPatch(
   state: AppState,
   targetId: string
-): Partial<AppState> | null {
+): { patch: Partial<AppState>; tabIds: string[] } | null {
   const targetTabIds = collectSshTargetTerminalTabIds(state, targetId)
   const tabPtyState = clearSshTargetTabPtyState(state, targetId, targetTabIds)
   const { next: nextDeferredSessions, removed: removedDeferredSession } =
@@ -254,30 +286,33 @@ export function buildRemovedSshTargetCleanupPatch(
   }
 
   return {
-    ...(removedTransientClearBlock
-      ? { transientClearedAgentStatusConnectionIds: nextTransientClearedConnections }
-      : {}),
-    ...(removedConnectionState ? { sshConnectionStates: nextConnectionStates } : {}),
-    ...(removedLabel ? { sshTargetLabels: nextLabels } : {}),
-    ...(removedHydrated ? { remoteWorkspaceHydratedTargetIds: nextHydrated } : {}),
-    ...(removedSyncStatus ? { remoteWorkspaceSyncStatusByTargetId: nextSyncStatus } : {}),
-    ...(removedPortForwards ? { portForwardsByConnection: nextPortForwards } : {}),
-    ...(removedDetectedPorts ? { detectedPortsByConnection: nextDetectedPorts } : {}),
-    ...(tabPtyState.changed
-      ? {
-          tabsByWorktree: tabPtyState.tabsByWorktree,
-          ptyIdsByTabId: tabPtyState.ptyIdsByTabId,
-          lastKnownRelayPtyIdByTabId: tabPtyState.lastKnownRelayPtyIdByTabId,
-          pendingCodexPaneRestartIds: tabPtyState.pendingCodexPaneRestartIds,
-          codexRestartNoticeByPtyId: tabPtyState.codexRestartNoticeByPtyId
-        }
-      : {}),
-    ...(removedCredentialRequest ? { sshCredentialQueue: nextCredentialQueue } : {}),
-    ...(removedDeferredTarget ? { deferredSshReconnectTargets: nextDeferredTargets } : {}),
-    ...(removedDeferredSession ? { deferredSshSessionIdsByTabId: nextDeferredSessions } : {}),
-    ...(removedPendingReconnect ? { pendingReconnectPtyIdByTabId: nextPendingReconnect } : {}),
-    ...(removedPaneRetries ? { directSshPaneRetryByTabId: nextPaneRetries } : {}),
-    ...(removedLiveBindings ? { directSshLivePtyBindingByTabId: nextLiveBindings } : {}),
-    ...(removedRetryHistory ? { directSshPaneRetryHistoryByTabId: nextRetryHistory } : {})
+    tabIds: [...targetTabIds],
+    patch: {
+      ...(removedTransientClearBlock
+        ? { transientClearedAgentStatusConnectionIds: nextTransientClearedConnections }
+        : {}),
+      ...(removedConnectionState ? { sshConnectionStates: nextConnectionStates } : {}),
+      ...(removedLabel ? { sshTargetLabels: nextLabels } : {}),
+      ...(removedHydrated ? { remoteWorkspaceHydratedTargetIds: nextHydrated } : {}),
+      ...(removedSyncStatus ? { remoteWorkspaceSyncStatusByTargetId: nextSyncStatus } : {}),
+      ...(removedPortForwards ? { portForwardsByConnection: nextPortForwards } : {}),
+      ...(removedDetectedPorts ? { detectedPortsByConnection: nextDetectedPorts } : {}),
+      ...(tabPtyState.changed
+        ? {
+            tabsByWorktree: tabPtyState.tabsByWorktree,
+            ptyIdsByTabId: tabPtyState.ptyIdsByTabId,
+            lastKnownRelayPtyIdByTabId: tabPtyState.lastKnownRelayPtyIdByTabId,
+            pendingCodexPaneRestartIds: tabPtyState.pendingCodexPaneRestartIds,
+            codexRestartNoticeByPtyId: tabPtyState.codexRestartNoticeByPtyId
+          }
+        : {}),
+      ...(removedCredentialRequest ? { sshCredentialQueue: nextCredentialQueue } : {}),
+      ...(removedDeferredTarget ? { deferredSshReconnectTargets: nextDeferredTargets } : {}),
+      ...(removedDeferredSession ? { deferredSshSessionIdsByTabId: nextDeferredSessions } : {}),
+      ...(removedPendingReconnect ? { pendingReconnectPtyIdByTabId: nextPendingReconnect } : {}),
+      ...(removedPaneRetries ? { directSshPaneRetryByTabId: nextPaneRetries } : {}),
+      ...(removedLiveBindings ? { directSshLivePtyBindingByTabId: nextLiveBindings } : {}),
+      ...(removedRetryHistory ? { directSshPaneRetryHistoryByTabId: nextRetryHistory } : {})
+    }
   }
 }

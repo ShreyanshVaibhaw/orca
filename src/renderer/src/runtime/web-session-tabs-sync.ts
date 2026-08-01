@@ -85,6 +85,7 @@ import {
   resolveWebAgentSessionHandoff
 } from './web-agent-session-handoff'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
+import { publishTerminalPaneAuthorityTopologyChange } from '@/store/terminal-pane-authority-topology-events'
 
 const WEB_SESSION_GROUP_PREFIX = 'web-session-tabs:'
 
@@ -2676,7 +2677,8 @@ export function applyFreshWebSessionTabsSnapshots(
 }
 
 export function applyWebSessionTabsStorePatch(
-  buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>
+  buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>,
+  affectedWorktreeIds: readonly string[]
 ): void {
   let mirroredAgentStatusChanged = false
   useAppStore.setState((state) => {
@@ -2685,6 +2687,7 @@ export function applyWebSessionTabsStorePatch(
       patch !== state && Object.prototype.hasOwnProperty.call(patch, 'agentStatusByPaneKey')
     return patch
   })
+  publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
   // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.
   if (mirroredAgentStatusChanged) {
     useAppStore.getState().scheduleAgentStatusFreshness()
@@ -2802,8 +2805,9 @@ export function useWebSessionTabsSync(): void {
           const applicable = recovered.filter(
             (snapshot): snapshot is RuntimeMobileSessionTabsResult => snapshot !== null
           )
-          applyWebSessionTabsStorePatch((state) =>
-            applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
+          applyWebSessionTabsStorePatch(
+            (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
+            applicable.map((snapshot) => snapshot.worktree)
           )
         })
         .catch((error) => {
@@ -2861,8 +2865,10 @@ export function useWebSessionTabsSync(): void {
                           acceptReplayedWebSessionTabsSnapshot(environmentId, snapshot.worktree)
                         }
                       }
-                      applyWebSessionTabsStorePatch((state) =>
-                        applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
+                      applyWebSessionTabsStorePatch(
+                        (state) =>
+                          applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
+                        applicable.map((snapshot) => snapshot.worktree)
                       )
                     }
                   })
@@ -2886,8 +2892,9 @@ export function useWebSessionTabsSync(): void {
                     if (replayed) {
                       acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                     }
-                    applyWebSessionTabsStorePatch((state) =>
-                      applyFreshWebSessionTabsSnapshot(state, recovered, environmentId)
+                    applyWebSessionTabsStorePatch(
+                      (state) => applyFreshWebSessionTabsSnapshot(state, recovered, environmentId),
+                      [recovered.worktree]
                     )
                   }
                 })
@@ -2999,8 +3006,9 @@ export function useWebSessionTabsSync(): void {
         skipWakeRespawn: shouldSkipWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       })
       if (fresh) {
-        applyWebSessionTabsStorePatch((state) =>
-          applyWebSessionTabsSnapshot(state, recovered, environmentId)
+        applyWebSessionTabsStorePatch(
+          (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+          [recovered.worktree]
         )
       }
       if (!disposed && shouldBootstrapInitialTerminal) {

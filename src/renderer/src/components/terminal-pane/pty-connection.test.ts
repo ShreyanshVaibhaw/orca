@@ -8030,6 +8030,8 @@ describe('connectPanePty', () => {
       name: 'retries an unknown live PTY without scanning tabs on unrelated store changes'
     }
   ] as const)('$name', async ({ topologyChangeTiming }) => {
+    const { publishTerminalPaneAuthorityTopologyChange } =
+      await import('@/store/terminal-pane-authority-topology-events')
     const firstLiveness = createDeferred<boolean | null>()
     vi.mocked(window.api.pty.hasPty)
       .mockReturnValueOnce(firstLiveness.promise)
@@ -8091,19 +8093,18 @@ describe('connectPanePty', () => {
           'tab-1': { ...mockStoreState.terminalLayoutsByTabId?.['tab-1'] }
         }
       } as StoreState
-      notifyStoreSubscribers()
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: ['tab-1'] })
       firstLiveness.resolve(null)
       await flushAsyncTicks()
     } else {
       firstLiveness.resolve(null)
       await flushAsyncTicks()
-      notifyStoreSubscribers()
       const targetedScansBeforeUnrelatedChange = targetTabFind.mock.calls.length
       mockStoreState = {
         ...mockStoreState,
         ptyIdsByTabId: { ...mockStoreState.ptyIdsByTabId, 'tab-other': [] }
       }
-      notifyStoreSubscribers()
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: ['tab-other'] })
       await flushAsyncTicks()
       expect(targetTabFind).toHaveBeenCalledTimes(targetedScansBeforeUnrelatedChange)
       expect(remountTerminalTabForRecovery).not.toHaveBeenCalled()
@@ -8115,7 +8116,7 @@ describe('connectPanePty', () => {
           'tab-1': { ...mockStoreState.terminalLayoutsByTabId?.['tab-1'] }
         }
       } as StoreState
-      notifyStoreSubscribers()
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: ['tab-1'] })
       await flushAsyncTicks()
     }
     expect(remountTerminalTabForRecovery).toHaveBeenCalledOnce()

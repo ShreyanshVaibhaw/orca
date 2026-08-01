@@ -47,6 +47,7 @@ import {
   transferAgentPaneAuthorityAlias
 } from './agent-pane-authority'
 import { createFreshnessScheduler } from './agent-status-freshness-scheduler'
+import { publishTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 
 /** Snapshot of a finished/vanished agent status entry, kept so the dashboard and sidebar hover
  *  keep showing the completion until the user clicks the worktree. `worktreeId` is stamped at
@@ -1212,6 +1213,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         agentLaunchConfigByPaneKey: nextLaunchConfigs
       }
     })
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...uniquePaneKeys] })
   }
 
   return {
@@ -1296,6 +1298,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       if (typeof window !== 'undefined') {
         window.api?.agentStatus?.retirePaneAuthority?.(ownerPaneKey)
       }
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: retiredPaneKeys })
     },
 
     transferAgentPaneAuthority: ({ fromPaneKey, toPaneKey, ptyId }) => {
@@ -1363,6 +1366,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           ...(transfer.ptyId ? { ptyId: transfer.ptyId } : {})
         })
       }
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [from, to] })
     },
 
     setRuntimeAgentOrchestrationByPaneKey: (entries) => {
@@ -1514,6 +1518,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             : {})
         }
       })
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
     },
     getAgentLaunchConfigForStatusEntry: (entry) => getLaunchConfigForEntry(get(), entry),
     getAgentLaunchConfigForStatusMetadata: (metadata) =>
@@ -1658,6 +1663,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       if (removedLiveStatus) {
         queueMicrotask(() => freshness.schedule())
       }
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
     },
 
     setAgentStatus: (paneKey, payload, terminalTitle, timing, routing, metadata) => {
@@ -1675,6 +1681,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       }
       let completionRefreshWorktreeId: string | null = null
       let suppressedInheritedTerminalStatus = false
+      const changedSleepingPaneKeys = new Set([paneKey])
       const generatedTitleEntry: { current: AgentStatusEntry | null } = { current: null }
       set((s) => {
         const existing = s.agentStatusByPaneKey[paneKey]
@@ -2017,6 +2024,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         const evictedOrphans = evictedPaneKeys.length > 0
         if (evictedOrphans) {
           const evictedPaneKeySet = new Set(evictedPaneKeys)
+          for (const evictedPaneKey of evictedPaneKeys) {
+            changedSleepingPaneKeys.add(evictedPaneKey)
+          }
           nextSleepingAgentSessions = removePaneKeys(nextSleepingAgentSessions, evictedPaneKeySet)
           nextLaunchConfigs = removePaneKeys(nextLaunchConfigs, evictedPaneKeySet)
         }
@@ -2037,6 +2047,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
               : s.sortEpoch
         }
       })
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...changedSleepingPaneKeys] })
       if (suppressedInheritedTerminalStatus) {
         return
       }
@@ -2753,6 +2764,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
         return changed ? { sleepingAgentSessionsByPaneKey: next } : s
       })
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
     },
 
     captureAllSleepingAgentSessions: (mode) => {
@@ -2809,6 +2821,13 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         }
         return changed ? { sleepingAgentSessionsByPaneKey: next } : s
       })
+      publishTerminalPaneAuthorityTopologyChange({
+        worktreeIds: [
+          ...new Set(
+            Object.values(get().sleepingAgentSessionsByPaneKey).map((record) => record.worktreeId)
+          )
+        ]
+      })
     },
 
     clearSleepingAgentSession: (paneKey) => clearSleepingAgentSessionsByPaneKey([paneKey]),
@@ -2837,6 +2856,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           }
         }
       })
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
     },
 
     clearSleepingAgentSessionsByWorktree: (worktreeId) => {
@@ -2866,9 +2886,17 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             }
           : s
       })
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
     },
 
     pruneSleepingAgentSessions: (validWorktreeIds) => {
+      const removedWorktreeIds = [
+        ...new Set(
+          Object.values(get().sleepingAgentSessionsByPaneKey)
+            .filter((record) => !validWorktreeIds.has(record.worktreeId))
+            .map((record) => record.worktreeId)
+        )
+      ]
       set((s) => {
         let changed = false
         const next: Record<string, SleepingAgentSessionRecord> = {}
@@ -2895,6 +2923,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             }
           : s
       })
+      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: removedWorktreeIds })
     },
 
     retainAgents: (entries) => {
