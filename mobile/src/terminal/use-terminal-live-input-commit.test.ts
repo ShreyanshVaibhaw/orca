@@ -193,6 +193,31 @@ function createTerminalLiveInputCommitHarness({
   }
 }
 
+async function createRecoveredReturnHarness(): Promise<TerminalLiveInputCommitHarness> {
+  const firstReturn = createDeferredOutcome()
+  let returnCount = 0
+  const harness = createTerminalLiveInputCommitHarness({
+    send: async (_handle, bytes) => {
+      if (bytes !== '\r') {
+        return 'accepted'
+      }
+      returnCount += 1
+      if (returnCount === 1) {
+        return firstReturn.promise
+      }
+      return returnCount === 2 ? 'rejected' : 'accepted'
+    }
+  })
+  harness.handlers.handleLiveInputChange('か')
+  harness.handlers.handleLiveInputSubmit()
+  await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r']))
+  harness.handlers.handleLiveInputChange('き')
+  harness.handlers.handleLiveInputSubmit()
+  firstReturn.resolve('rejected')
+  await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('\rき\r'))
+  return harness
+}
+
 describe('terminal live input commit hook', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -375,29 +400,36 @@ describe('terminal live input commit hook', () => {
   })
 
   it('retains an exact boundary replay after two rejected return attempts', async () => {
-    const firstReturn = createDeferredOutcome()
-    let returnCount = 0
-    const harness = createTerminalLiveInputCommitHarness({
-      send: async (_handle, bytes) => {
-        if (bytes !== '\r') {
-          return 'accepted'
-        }
-        returnCount += 1
-        return returnCount === 1 ? firstReturn.promise : 'rejected'
-      }
-    })
-    harness.handlers.handleLiveInputChange('か')
-    harness.handlers.handleLiveInputSubmit()
-    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r']))
-    harness.handlers.handleLiveInputChange('き')
-    harness.handlers.handleLiveInputSubmit()
-
-    firstReturn.resolve('rejected')
-    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('\rき\r'))
+    const harness = await createRecoveredReturnHarness()
     expect(harness.sent).toEqual(['か', '\r', '\r'])
     harness.handlers.handleLiveInputSubmit()
 
     await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r', '\r', '\rき\r']))
+    harness.unmount()
+  })
+
+  it('runs a nonmatching external boundary after exact return recovery', async () => {
+    const harness = await createRecoveredReturnHarness()
+    const sendBoundary = vi.fn(async () => true)
+
+    await expect(
+      harness.handlers.sendLiveInputExternalBoundary('terminal-a', sendBoundary)
+    ).resolves.toBe(true)
+
+    expect(sendBoundary).toHaveBeenCalledOnce()
+    expect(harness.sent).toEqual(['か', '\r', '\r', '\rき\r'])
+    harness.unmount()
+  })
+
+  it.each([
+    ['appending text', '\rき\rく', ['\rき\r', 'く', '\r']],
+    ['deleting the recovery', '', ['\r']]
+  ] as const)('sends a new return after %s', async (_label, text, expected) => {
+    const harness = await createRecoveredReturnHarness()
+    harness.handlers.handleLiveInputChange(text)
+    harness.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(harness.sent.slice(3)).toEqual(expected))
     harness.unmount()
   })
 
@@ -541,6 +573,36 @@ describe('terminal live input commit hook', () => {
     expect(sent).toEqual(['한'])
     expect(sendBoundary).not.toHaveBeenCalled()
   })
+
+  it.each(['returns false', 'throws'] as const)(
+    'preserves kana entered behind an external boundary that %s before sending',
+    async (failure) => {
+      const deferred = createDeferredOutcome()
+      const started = vi.fn()
+      const harness = createTerminalLiveInputCommitHarness()
+      const boundary = harness.handlers.sendLiveInputExternalBoundary('terminal-a', async () => {
+        started()
+        const outcome = await deferred.promise
+        if (outcome === 'unknown') {
+          throw new Error('external boundary failed')
+        }
+        return false
+      })
+      await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+      harness.handlers.handleLiveInputChange('き')
+      deferred.resolve(failure === 'throws' ? 'unknown' : 'rejected')
+
+      if (failure === 'throws') {
+        await expect(boundary).rejects.toThrow('external boundary failed')
+      } else {
+        await expect(boundary).resolves.toBe(false)
+      }
+      expect(harness.captures.at(-1)).toBe('き')
+      harness.handlers.handleLiveInputSubmit()
+      await vi.waitFor(() => expect(harness.sent).toEqual(['き', '\r']))
+      harness.unmount()
+    }
+  )
 
   it('Given non-Hangul IME text When changes arrive Then mirrors immediately without a settle window', async () => {
     // Given

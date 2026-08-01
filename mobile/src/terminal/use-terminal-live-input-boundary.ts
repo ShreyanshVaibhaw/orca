@@ -78,11 +78,16 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       if (expectedHandle !== activeHandleRef.current) {
         return Promise.resolve(false)
       }
-      const consumeRecoveredBoundary = boundaryFieldRecoveryRef.current.consumeNextBoundary
+      const fieldText = currentLiveInputFieldTextRef.current
+      const recoveredBoundary = boundaryFieldRecoveryRef.current.recoveredBoundary
+      const recoverableBoundary =
+        recoveredBoundary?.fieldText === fieldText ? recoveredBoundary : null
+      const consumeRecoveredBoundary =
+        recoveryBytes !== undefined && recoveryBytes === recoverableBoundary?.boundaryBytes
       const lifecycleEpoch = lifecycleEpochRef.current
       let recoveryToken: symbol | null = null
       const invalidateBoundaryDependents = (
-        outcome: TerminalLiveInputSendOutcome | false
+        outcome: Exclude<TerminalLiveInputSendOutcome, 'accepted'>
       ): void => {
         lifecycleEpochRef.current += 1
         pendingLiveInputFlushRef.current = null
@@ -134,8 +139,8 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
               sent = await sendBoundary(isBoundaryCurrent)
             }
           } catch (error) {
-            if (isBoundaryCurrent()) {
-              invalidateBoundaryDependents('unknown')
+            if (isBoundaryCurrent() && (sendOutcome === 'rejected' || sendOutcome === 'unknown')) {
+              invalidateBoundaryDependents(sendOutcome)
             }
             throw error
           }
@@ -145,12 +150,15 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
           if (sent) {
             return true
           }
-          invalidateBoundaryDependents(sendOutcome ?? false)
+          if (sendOutcome === 'rejected' || sendOutcome === 'unknown') {
+            invalidateBoundaryDependents(sendOutcome)
+          }
           return false
         })
       }
       const handle = pendingLiveInputHandleRef.current
       if (!handle) {
+        boundaryFieldRecoveryRef.current.recoveredBoundary = null
         return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, sendCurrentBoundary)
       }
       if (handle !== expectedHandle) {
@@ -166,8 +174,6 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
         clearPendingLiveInputCommit()
         return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, async () => false)
       }
-
-      const fieldText = currentLiveInputFieldTextRef.current
       if (heldLiveInputTextRef.current.length > 0 || fieldText !== sentLiveInputTextRef.current) {
         void runMirrorStep(handle, fieldText, true)
       }
@@ -175,7 +181,7 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
         boundaryFieldRecoveryRef.current,
         fieldText,
         consumeRecoveredBoundary ? '' : (recoveryBytes ?? ''),
-        consumeRecoveredBoundary
+        recoverableBoundary
       )
       const boundaryPromise = queueTerminalLiveBoundarySend(
         pendingLiveInputFlushRef,
@@ -190,12 +196,7 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       liveInputRef.current?.setNativeProps({ text: '' })
       const releaseRecovery = (): void =>
         releaseTerminalLiveBoundaryField(boundaryFieldRecoveryRef.current, recoveryToken)
-      void boundaryPromise.then((sent) => {
-        releaseRecovery()
-        if (sent && consumeRecoveredBoundary) {
-          boundaryFieldRecoveryRef.current.consumeNextBoundary = false
-        }
-      }, releaseRecovery)
+      void boundaryPromise.then(releaseRecovery, releaseRecovery)
       return boundaryPromise
     },
     [
