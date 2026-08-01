@@ -2,7 +2,10 @@ import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { describe, expect, it, vi } from 'vitest'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundarySend,
+  TerminalLiveInputSender
+} from './terminal-live-input-sender'
 import {
   getTerminalLiveAccessoryInactiveInputCommitResult,
   useTerminalLiveAccessoryInputCommit,
@@ -94,9 +97,9 @@ function createAccessoryInputCommitHarness({
   const applyLiveInputMirror = vi.fn((_handle: string, _fieldText: string) => {})
   const clearPendingLiveInputCommit = vi.fn(() => {})
   const runLiveInputBoundary = vi.fn(
-    async (_expectedHandle: string, sendBoundary: () => Promise<boolean>) => {
+    async (_expectedHandle: string, sendBoundary: TerminalLiveInputBoundarySend) => {
       await boundaryGate
-      return flushResult ? sendBoundary() : false
+      return flushResult ? sendBoundary(() => true) : false
     }
   )
   const waitForPendingLiveInputFlush = vi.fn(

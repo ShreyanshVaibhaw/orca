@@ -35,7 +35,8 @@ function createDeferredText(): DeferredText {
 
 function renderPaste(
   inputScopeRef: RefObject<string>,
-  sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => send()
+  sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) =>
+    send(() => true)
 ) {
   const sendRequest = vi.fn(async () => ({
     id: '1',
@@ -138,7 +139,7 @@ it('reserves paste ordering before a deferred clipboard read', async () => {
   const events: string[] = []
   let tail = Promise.resolve(true)
   const orderedBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
-    const result = tail.then(send)
+    const result = tail.then(() => send(() => true))
     tail = result.catch(() => false)
     return result
   }
@@ -166,6 +167,48 @@ it('reserves paste ordering before a deferred clipboard read', async () => {
 
   expect(events).toEqual(['paste', 'return'])
   act(() => renderer.unmount())
+})
+
+it('drops a deferred paste across a producer generation ABA change', async () => {
+  const deferredText = createDeferredText()
+  vi.mocked(Clipboard.getStringAsync).mockReturnValue(deferredText.promise)
+  let producerGeneration = Symbol('terminal-a-1')
+  const boundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+    const reservedGeneration = producerGeneration
+    return send(() => producerGeneration === reservedGeneration)
+  }
+  const inputScopeRef = { current: 'host-a\0worktree-a' }
+  const { onSuccess, paste, renderer, sendRequest } = renderPaste(inputScopeRef, boundary)
+
+  const result = paste()
+  await vi.waitFor(() => expect(Clipboard.getStringAsync).toHaveBeenCalled())
+  producerGeneration = Symbol('terminal-b')
+  producerGeneration = Symbol('terminal-a-2')
+  deferredText.resolve('echo stale')
+  await result
+
+  expect(sendRequest).not.toHaveBeenCalled()
+  expect(onSuccess).not.toHaveBeenCalled()
+  act(() => renderer.unmount())
+})
+
+it('drops a deferred paste after unmount', async () => {
+  const deferredText = createDeferredText()
+  vi.mocked(Clipboard.getStringAsync).mockReturnValue(deferredText.promise)
+  let mounted = true
+  const boundary: TerminalLiveInputBoundarySender = (_handle, send) => send(() => mounted)
+  const inputScopeRef = { current: 'host-a\0worktree-a' }
+  const { onSuccess, paste, renderer, sendRequest } = renderPaste(inputScopeRef, boundary)
+
+  const result = paste()
+  await vi.waitFor(() => expect(Clipboard.getStringAsync).toHaveBeenCalled())
+  mounted = false
+  act(() => renderer.unmount())
+  deferredText.resolve('echo stale')
+  await result
+
+  expect(sendRequest).not.toHaveBeenCalled()
+  expect(onSuccess).not.toHaveBeenCalled()
 })
 
 it.each([

@@ -120,8 +120,14 @@ export function useMobileTerminalPaste({
     const targetHandle = activeHandle
     try {
       // Why: reserve the tap before clipboard/image preparation so a later Return cannot overtake it.
-      const sent = await sendLiveInputExternalBoundary(targetHandle, async () => {
+      const sent = await sendLiveInputExternalBoundary(targetHandle, async (isBoundaryCurrent) => {
+        if (!isBoundaryCurrent()) {
+          return false
+        }
         const text = await Clipboard.getStringAsync()
+        if (!isBoundaryCurrent()) {
+          return false
+        }
         let payload: string
         if (text.length > 0) {
           payload = buildMobileTerminalClipboardTextPayload(
@@ -130,15 +136,27 @@ export function useMobileTerminalPaste({
           )
         } else {
           const image = await Clipboard.getImageAsync({ format: 'png' })
+          if (!isBoundaryCurrent()) {
+            return false
+          }
           if (!image) {
             refreshCanPaste()
             return false
           }
           const connectionId = await getActiveWorktreeConnectionId()
+          if (!isBoundaryCurrent()) {
+            return false
+          }
           const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
+          if (!isBoundaryCurrent()) {
+            return false
+          }
           const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
             connectionId
           })
+          if (!isBoundaryCurrent()) {
+            return false
+          }
           payload = buildMobileImagePastePayload(imagePath)
         }
 
@@ -152,6 +170,7 @@ export function useMobileTerminalPaste({
         const currentClient = clientRef.current
         if (
           !currentClient ||
+          !isBoundaryCurrent() ||
           inputScope !== inputScopeRef.current ||
           connStateRef.current !== 'connected' ||
           targetHandle !== activeHandleRef.current ||
@@ -164,7 +183,7 @@ export function useMobileTerminalPaste({
           text: payload,
           deviceToken: deviceTokenRef.current
         })
-        return isTerminalSendRpcAccepted(response)
+        return isBoundaryCurrent() && isTerminalSendRpcAccepted(response)
       })
       if (!sent) {
         return

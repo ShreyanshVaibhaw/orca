@@ -82,7 +82,7 @@ function createGestureQueueHarness(
 }
 
 function createScopedBoundary(inputScope: string): TerminalLiveInputBoundarySender {
-  return (handle, send) => queueTerminalLiveHandleSend(inputScope, handle, send)
+  return (handle, send) => queueTerminalLiveHandleSend(inputScope, handle, () => send(() => true))
 }
 
 afterEach(() => {

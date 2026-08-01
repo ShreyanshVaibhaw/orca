@@ -1,6 +1,9 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundarySender,
+  TerminalLiveInputSender
+} from './terminal-live-input-sender'
 import {
   buildTerminalLiveMirrorPayload,
   computeTerminalLiveMirrorStep,
@@ -34,10 +37,7 @@ type TerminalLivePendingInputFlush = {
   readonly isLiveInputProducerCurrent: () => boolean
   readonly pendingLiveInputHandleRef: RefObject<string | null>
   readonly reconcileLiveInputAfterDisconnect: () => void
-  readonly runLiveInputBoundary: (
-    expectedHandle: string | null,
-    sendBoundary: () => Promise<boolean>
-  ) => Promise<boolean>
+  readonly runLiveInputBoundary: TerminalLiveInputBoundarySender
   readonly sentLiveInputTextRef: RefObject<string>
   readonly waitForPendingLiveInputFlush: () => Promise<boolean>
 }
@@ -224,8 +224,8 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
     [runMirrorStep]
   )
 
-  const runLiveInputBoundary = useCallback(
-    (expectedHandle: string | null, sendBoundary: () => Promise<boolean>): Promise<boolean> => {
+  const runLiveInputBoundary = useCallback<TerminalLiveInputBoundarySender>(
+    (expectedHandle, sendBoundary) => {
       if (
         !inputStateReady ||
         disposedRef.current ||
@@ -233,29 +233,25 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       ) {
         return Promise.resolve(false)
       }
-      if (expectedHandle !== null && expectedHandle !== activeHandleRef.current) {
+      if (expectedHandle !== activeHandleRef.current) {
         return Promise.resolve(false)
       }
       const lifecycleEpoch = lifecycleEpochRef.current
       const sendCurrentBoundary = (): Promise<boolean> => {
-        const targetHandle = expectedHandle ?? activeHandleRef.current
-        if (!targetHandle) {
-          return Promise.resolve(false)
-        }
-        return queueTerminalLiveHandleSend(liveInputScope, targetHandle, () =>
+        const isBoundaryCurrent = (): boolean =>
           inputStateReady &&
           !disposedRef.current &&
           lifecycleEpoch === lifecycleEpochRef.current &&
           liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current
-            ? sendBoundary()
-            : Promise.resolve(false)
+        return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, () =>
+          isBoundaryCurrent() ? sendBoundary(isBoundaryCurrent) : Promise.resolve(false)
         )
       }
       const handle = pendingLiveInputHandleRef.current
       if (!handle) {
         return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, sendCurrentBoundary)
       }
-      if (expectedHandle !== null && handle !== expectedHandle) {
+      if (handle !== expectedHandle) {
         clearPendingLiveInputCommit()
         return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, sendCurrentBoundary)
       }

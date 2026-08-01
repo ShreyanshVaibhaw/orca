@@ -42,21 +42,34 @@ export async function attachMobileImageToTerminal(
   if (!picked) {
     return false
   }
-  onUploadStart?.()
-  const connectionId = await getConnectionId()
-  const imagePath = await saveMobileClipboardImageAsTempFile(client, picked.base64, {
-    connectionId
-  })
-  // Why: a generated image path is terminal image injection, so it's always
-  // bracketed (matching desktop paste) regardless of terminal mode.
-  const payload = buildMobileImagePastePayload(imagePath)
-  const send = async (): Promise<boolean> => {
+  // Why: selection is the user-intent boundary; later terminal input must not overtake its upload.
+  const uploadAndSend: Parameters<TerminalLiveInputBoundarySender>[1] = async (
+    isBoundaryCurrent
+  ) => {
+    if (!isBoundaryCurrent()) {
+      return false
+    }
+    onUploadStart?.()
+    const connectionId = await getConnectionId()
+    if (!isBoundaryCurrent()) {
+      return false
+    }
+    const imagePath = await saveMobileClipboardImageAsTempFile(client, picked.base64, {
+      connectionId
+    })
+    if (!isBoundaryCurrent()) {
+      return false
+    }
+    // Why: generated image paths always use desktop-compatible bracketed paste.
+    const payload = buildMobileImagePastePayload(imagePath)
     const response = await sendMobileTerminalPasteRequest(client, {
       terminal,
       text: payload,
       deviceToken
     })
-    return isTerminalSendRpcAccepted(response)
+    return isBoundaryCurrent() && isTerminalSendRpcAccepted(response)
   }
-  return sendTerminalBoundary ? sendTerminalBoundary(terminal, send) : send()
+  return sendTerminalBoundary
+    ? sendTerminalBoundary(terminal, uploadAndSend)
+    : uploadAndSend(() => true)
 }

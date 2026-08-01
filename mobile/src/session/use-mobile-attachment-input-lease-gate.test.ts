@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
 import { useMobileAttachmentInputLeaseGate } from './use-mobile-attachment-input-lease-gate'
 
-type Gate = (targetHandle: string, sendBoundary: () => Promise<boolean>) => Promise<boolean>
+type Gate = TerminalLiveInputBoundarySender
 
 const sendBoundary = async (): Promise<boolean> => true
 
@@ -44,7 +44,7 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     function Probe(): null {
       gate = useMobileAttachmentInputLeaseGate({
         sendLiveInputExternalBoundary:
-          args.sendLiveInputExternalBoundary ?? ((_handle, send) => send()),
+          args.sendLiveInputExternalBoundary ?? ((_handle, send) => send(() => true)),
         inputScope: args.inputScope ?? 'host-a\0worktree-a',
         inputScopeRef: args.inputScopeRef ?? { current: 'host-a\0worktree-a' },
         connStateRef: args.connState,
@@ -96,6 +96,25 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     await vi.advanceTimersByTimeAsync(100)
     await expect(result).resolves.toBe(true)
     expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('reserves the external boundary before waiting for the lease', async () => {
+    const refs = baseRefs()
+    refs.leaseReady.current = false
+    const sendLiveInputExternalBoundary = vi.fn<TerminalLiveInputBoundarySender>((_handle, send) =>
+      send(() => true)
+    )
+    const { gate } = renderGate({
+      ...refs,
+      showToast: vi.fn(),
+      sendLiveInputExternalBoundary
+    })
+
+    const result = gate()('terminal-1', sendBoundary)
+    expect(sendLiveInputExternalBoundary).toHaveBeenCalledOnce()
+    refs.leaseReady.current = true
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(result).resolves.toBe(true)
   })
 
   it('surfaces a toast when the lease never recovers', async () => {
@@ -174,7 +193,7 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     })
     const sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
       runQueuedBoundary = async () => {
-        const result = await send()
+        const result = await send(() => true)
         resolveQueuedResult(result)
         return result
       }
@@ -210,7 +229,7 @@ describe('useMobileAttachmentInputLeaseGate', () => {
     })
     const sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
       runQueuedBoundary = async () => {
-        const result = await send()
+        const result = await send(() => true)
         resolveQueuedResult(result)
         return result
       }

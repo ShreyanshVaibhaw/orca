@@ -19,7 +19,7 @@ type AttachmentInputLeaseGateArgs = {
 const LEASE_READY_POLL_MS = 100
 const LEASE_READY_TIMEOUT_MS = 3000
 
-/** Waits for the terminal lease, then reserves the attachment behind live input. */
+/** Reserves the attachment behind live input, then waits for the terminal lease. */
 export function useMobileAttachmentInputLeaseGate({
   sendLiveInputExternalBoundary,
   inputScope,
@@ -32,47 +32,40 @@ export function useMobileAttachmentInputLeaseGate({
 }: AttachmentInputLeaseGateArgs): TerminalLiveInputBoundarySender {
   return useCallback(
     async (targetHandle, sendBoundary): Promise<boolean> => {
-      // Why: image picking/upload can outlive the original tab.
-      if (
-        inputScope !== inputScopeRef.current ||
-        connStateRef.current !== 'connected' ||
-        targetHandle !== activeHandleRef.current ||
-        activeSessionTabTypeRef.current !== 'terminal'
-      ) {
+      const isTargetCurrent = (): boolean =>
+        inputScope === inputScopeRef.current &&
+        connStateRef.current === 'connected' &&
+        targetHandle === activeHandleRef.current &&
+        activeSessionTabTypeRef.current === 'terminal'
+      // Why: image picking can outlive the original tab.
+      if (!isTargetCurrent()) {
         return false
       }
-      const deadline = Date.now() + LEASE_READY_TIMEOUT_MS
-      while (!nativeChatInputLeaseReadyRef.current && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, LEASE_READY_POLL_MS))
-      }
-      // Why: the wait can outlive the target too — re-check so a tab/host switch
-      // or disconnect mid-wait doesn't send into the wrong (or dead) terminal.
-      // A moved-away target drops silently like the pre-wait guard; only a lease
-      // that never recovered warrants the toast.
-      if (
-        inputScope !== inputScopeRef.current ||
-        connStateRef.current !== 'connected' ||
-        targetHandle !== activeHandleRef.current ||
-        activeSessionTabTypeRef.current !== 'terminal'
-      ) {
-        return false
-      }
-      if (nativeChatInputLeaseReadyRef.current) {
-        return sendLiveInputExternalBoundary(targetHandle, async () => {
-          if (
-            inputScope !== inputScopeRef.current ||
-            connStateRef.current !== 'connected' ||
-            targetHandle !== activeHandleRef.current ||
-            activeSessionTabTypeRef.current !== 'terminal' ||
-            !nativeChatInputLeaseReadyRef.current
-          ) {
+
+      return sendLiveInputExternalBoundary(targetHandle, async (isBoundaryCurrent) => {
+        const isAttachmentCurrent = (): boolean =>
+          isBoundaryCurrent() && isTargetCurrent() && nativeChatInputLeaseReadyRef.current
+        const deadline = Date.now() + LEASE_READY_TIMEOUT_MS
+        while (
+          isBoundaryCurrent() &&
+          isTargetCurrent() &&
+          !nativeChatInputLeaseReadyRef.current &&
+          Date.now() < deadline
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, LEASE_READY_POLL_MS))
+        }
+        if (!isBoundaryCurrent() || !isTargetCurrent()) {
+          return false
+        }
+        if (nativeChatInputLeaseReadyRef.current) {
+          if (!isAttachmentCurrent()) {
             return false
           }
-          return sendBoundary()
-        })
-      }
-      showToast('Attach failed (reconnecting)', 1500)
-      return false
+          return sendBoundary(isAttachmentCurrent)
+        }
+        showToast('Attach failed (reconnecting)', 1500)
+        return false
+      })
     },
     [
       activeHandleRef,

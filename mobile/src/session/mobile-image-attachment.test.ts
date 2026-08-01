@@ -7,6 +7,14 @@ function ok(id: string, result: unknown): RpcSuccess {
   return { id, ok: true, result, _meta: { runtimeId: 'runtime-1' } }
 }
 
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolvePromise: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
+
 function clientWithResponses(responses: RpcResponse[]): Pick<RpcClient, 'sendRequest'> & {
   calls: { method: string; params: unknown; options?: SendRequestOptions }[]
 } {
@@ -55,6 +63,79 @@ describe('attachMobileImageToTerminal', () => {
       client: { id: 'device-9', type: 'mobile' }
     })
     expect(sendCall?.options).toEqual({ failWhenDisconnected: true })
+  })
+
+  it('reserves attachment ordering before connection lookup and upload', async () => {
+    const client = clientWithResponses([
+      {
+        id: 'start',
+        ok: false,
+        error: { code: 'method_not_found', message: 'no' },
+        _meta: { runtimeId: 'r' }
+      },
+      ok('save', '/tmp/ordered.png'),
+      ok('send', { send: { accepted: true } })
+    ])
+    const connectionId = createDeferred<string | null>()
+    const getConnectionId = vi.fn(() => connectionId.promise)
+    const events: string[] = []
+    let tail = Promise.resolve(true)
+    const orderedBoundary: NonNullable<
+      Parameters<typeof attachMobileImageToTerminal>[1]['sendTerminalBoundary']
+    > = (_handle, send) => {
+      const result = tail.then(async () => {
+        const sent = await send(() => true)
+        events.push('boundary-complete')
+        return sent
+      })
+      tail = result.catch(() => false)
+      return result
+    }
+
+    const attachment = attachMobileImageToTerminal('library', {
+      client,
+      terminal: 'term-ordered',
+      deviceToken: null,
+      getConnectionId,
+      pickImage: vi.fn().mockResolvedValue({ base64: 'AAAA' }),
+      sendTerminalBoundary: orderedBoundary
+    })
+    await vi.waitFor(() => expect(getConnectionId).toHaveBeenCalledOnce())
+    const laterReturn = orderedBoundary('term-ordered', async () => {
+      events.push('return')
+      return true
+    })
+
+    expect(events).toEqual([])
+    connectionId.resolve('conn-ordered')
+    await expect(attachment).resolves.toBe(true)
+    await expect(laterReturn).resolves.toBe(true)
+    expect(events).toEqual(['boundary-complete', 'return', 'boundary-complete'])
+  })
+
+  it('stops a stale attachment before upload after deferred connection lookup', async () => {
+    const client = clientWithResponses([])
+    const connectionId = createDeferred<string | null>()
+    const getConnectionId = vi.fn(() => connectionId.promise)
+    let current = true
+    const sendTerminalBoundary: NonNullable<
+      Parameters<typeof attachMobileImageToTerminal>[1]['sendTerminalBoundary']
+    > = (_handle, send) => send(() => current)
+
+    const attachment = attachMobileImageToTerminal('library', {
+      client,
+      terminal: 'term-stale',
+      deviceToken: null,
+      getConnectionId,
+      pickImage: vi.fn().mockResolvedValue({ base64: 'AAAA' }),
+      sendTerminalBoundary
+    })
+    await vi.waitFor(() => expect(getConnectionId).toHaveBeenCalledOnce())
+    current = false
+    connectionId.resolve(null)
+
+    await expect(attachment).resolves.toBe(false)
+    expect(client.calls).toEqual([])
   })
 
   it('passes the active worktree connectionId to the upload', async () => {

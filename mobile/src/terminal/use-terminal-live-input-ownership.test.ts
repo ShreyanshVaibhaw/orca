@@ -162,6 +162,52 @@ it('rejects a captured producer boundary after unmount', async () => {
   expect(producerSend).not.toHaveBeenCalled()
 })
 
+it('invalidates a started boundary guard across owner ABA', async () => {
+  const harness = createOwnershipHarness()
+  const deferred = createDeferredBoolean()
+  const started = vi.fn()
+  let isBoundaryCurrent: (() => boolean) | null = null
+  const boundary = harness.handlers.runLiveInputBoundary('terminal-a', async (checkCurrent) => {
+    isBoundaryCurrent = checkCurrent
+    started()
+    await deferred.promise
+    if (!checkCurrent()) {
+      return false
+    }
+    harness.sent.push('stale-a')
+    return true
+  })
+  await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+
+  harness.setOwner('terminal-b', 'terminal-b')
+  harness.setOwner('terminal-a', 'terminal-a-2')
+  expect(isBoundaryCurrent?.()).toBe(false)
+  deferred.resolve(true)
+
+  await expect(boundary).resolves.toBe(false)
+  expect(harness.sent).toEqual([])
+  harness.unmount()
+})
+
+it('invalidates a started boundary guard after unmount', async () => {
+  const harness = createOwnershipHarness()
+  const deferred = createDeferredBoolean()
+  const started = vi.fn()
+  let isBoundaryCurrent: (() => boolean) | null = null
+  const boundary = harness.handlers.runLiveInputBoundary('terminal-a', async (checkCurrent) => {
+    isBoundaryCurrent = checkCurrent
+    started()
+    await deferred.promise
+    return checkCurrent()
+  })
+  await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+
+  harness.unmount()
+  expect(isBoundaryCurrent?.()).toBe(false)
+  deferred.resolve(true)
+  await expect(boundary).resolves.toBe(false)
+})
+
 it('cancels a queued mirror delta across a live-mode ABA change', async () => {
   const harness = createOwnershipHarness()
   harness.handlers.applyLiveInputMirror('terminal-a', 'a')
