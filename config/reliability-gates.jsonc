@@ -1989,6 +1989,8 @@
         {
           "file": "src/renderer/src/lib/sleeping-agent-recovery-topology.test.ts",
           "assertions": [
+            "does not suppress a worktree hydration coalesced with an unrelated pane change",
+            "does not let an unrelated later change advance a stale pane generation",
             "does not let a queued hydration consume a later reconnect wait",
             "does not enumerate sleeping records for unrelated paced changes"
           ]

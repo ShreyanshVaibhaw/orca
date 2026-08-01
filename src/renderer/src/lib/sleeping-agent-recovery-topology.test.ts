@@ -70,6 +70,44 @@ afterEach(() => {
 })
 
 describe('sleeping agent recovery topology', () => {
+  it('does not suppress a worktree hydration coalesced with an unrelated pane change', async () => {
+    useAppStore.setState(emptyTopology() as never)
+    const recover = vi.fn()
+
+    waitForRecoveryTopology(WORKTREE_ID, [record], recover)
+    useAppStore.setState(hydratedTopology() as never)
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [WORKTREE_ID] })
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: ['unrelated-tab:unrelated-leaf'] })
+
+    await Promise.resolve()
+
+    expect(recover).toHaveBeenCalledOnce()
+    expect(recover).toHaveBeenCalledWith([record])
+  })
+
+  it('does not let an unrelated later change advance a stale pane generation', async () => {
+    useAppStore.setState(emptyTopology() as never)
+    const currentRecover = vi.fn()
+
+    waitForRecoveryTopology(WORKTREE_ID, [record], () => {})
+    useAppStore.setState(hydratedTopology() as never)
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: [record.paneKey] })
+    cancelRecoveryTopologyWait(WORKTREE_ID)
+    useAppStore.setState(emptyTopology() as never)
+    waitForRecoveryTopology(WORKTREE_ID, [record], currentRecover)
+    useAppStore.setState(hydratedTopology() as never)
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: ['unrelated-tab:unrelated-leaf'] })
+
+    await Promise.resolve()
+    expect(currentRecover).not.toHaveBeenCalled()
+
+    publishTerminalPaneAuthorityTopologyChange({ paneKeys: [record.paneKey] })
+    await Promise.resolve()
+
+    expect(currentRecover).toHaveBeenCalledOnce()
+    expect(currentRecover).toHaveBeenCalledWith([record])
+  })
+
   it('does not let a queued hydration consume a later reconnect wait', async () => {
     useAppStore.setState(emptyTopology() as never)
     const staleRecover = () => {}

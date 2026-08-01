@@ -24,9 +24,9 @@ type RecoveryTopologyWait = {
 }
 
 type QueuedTopologyChange = {
-  paneKeys: Set<string>
-  tabIds: Set<string>
-  worktreeIds: Set<string>
+  paneKeys: Map<string, number>
+  tabIds: Map<string, number>
+  worktreeIds: Map<string, number>
 }
 
 const topologyWaitsByWorktree = new Map<string, RecoveryTopologyWait>()
@@ -36,7 +36,6 @@ let unsubscribeRecoveryTopology: (() => void) | null = null
 let recoveryTopologyDispatching = false
 let recoveryTopologyWaitGeneration = 0
 let queuedTopologyChange: QueuedTopologyChange | null = null
-let queuedTopologyWaitGeneration = 0
 let topologyDispatchQueued = false
 
 function addIndexedRegistration(
@@ -190,10 +189,7 @@ function dispatchResolvedRecords(
   stopTopologySubscriptionIfIdle()
 }
 
-function dispatchRecoveryTopologyChange(
-  change: QueuedTopologyChange,
-  maximumWaitGeneration: number
-): void {
+function dispatchRecoveryTopologyChange(change: QueuedTopologyChange): void {
   if (recoveryTopologyDispatching) {
     return
   }
@@ -201,24 +197,31 @@ function dispatchRecoveryTopologyChange(
   try {
     const state = useAppStore.getState()
     const recordsByWait = new Map<RecoveryTopologyWait, Set<SleepingAgentSessionRecord>>()
-    for (const paneKey of change.paneKeys) {
+    for (const [paneKey, maximumWaitGeneration] of change.paneKeys) {
       reconcilePaneKey(paneKey, state, recordsByWait, maximumWaitGeneration)
     }
-    const candidates = new Set<RecoveryTopologyRegistration>()
-    for (const tabId of change.tabIds) {
+    const candidates = new Map<RecoveryTopologyRegistration, number>()
+    const addCandidate = (
+      registration: RecoveryTopologyRegistration,
+      maximumWaitGeneration: number
+    ): void => {
+      candidates.set(
+        registration,
+        Math.max(candidates.get(registration) ?? 0, maximumWaitGeneration)
+      )
+    }
+    for (const [tabId, maximumWaitGeneration] of change.tabIds) {
       for (const registration of registrationsByTabId.get(tabId) ?? []) {
-        candidates.add(registration)
+        addCandidate(registration, maximumWaitGeneration)
       }
     }
-    if (change.paneKeys.size === 0 && change.tabIds.size === 0) {
-      for (const worktreeId of change.worktreeIds) {
-        const wait = topologyWaitsByWorktree.get(worktreeId)
-        for (const registration of wait?.registrationsByPaneKey.values() ?? []) {
-          candidates.add(registration)
-        }
+    for (const [worktreeId, maximumWaitGeneration] of change.worktreeIds) {
+      const wait = topologyWaitsByWorktree.get(worktreeId)
+      for (const registration of wait?.registrationsByPaneKey.values() ?? []) {
+        addCandidate(registration, maximumWaitGeneration)
       }
     }
-    for (const registration of candidates) {
+    for (const [registration, maximumWaitGeneration] of candidates) {
       reconcileRegistration(registration, state, recordsByWait, maximumWaitGeneration)
     }
     dispatchResolvedRecords(recordsByWait)
@@ -227,22 +230,25 @@ function dispatchRecoveryTopologyChange(
   }
 }
 
+function queueIdentityGeneration(index: Map<string, number>, identity: string): void {
+  index.set(identity, Math.max(index.get(identity) ?? 0, recoveryTopologyWaitGeneration))
+}
+
 function queueRecoveryTopologyChange(change: TerminalPaneAuthorityTopologyChange): void {
   queuedTopologyChange ??= {
-    paneKeys: new Set(),
-    tabIds: new Set(),
-    worktreeIds: new Set()
+    paneKeys: new Map(),
+    tabIds: new Map(),
+    worktreeIds: new Map()
   }
   for (const paneKey of change.paneKeys ?? []) {
-    queuedTopologyChange.paneKeys.add(paneKey)
+    queueIdentityGeneration(queuedTopologyChange.paneKeys, paneKey)
   }
   for (const tabId of change.tabIds ?? []) {
-    queuedTopologyChange.tabIds.add(tabId)
+    queueIdentityGeneration(queuedTopologyChange.tabIds, tabId)
   }
   for (const worktreeId of change.worktreeIds ?? []) {
-    queuedTopologyChange.worktreeIds.add(worktreeId)
+    queueIdentityGeneration(queuedTopologyChange.worktreeIds, worktreeId)
   }
-  queuedTopologyWaitGeneration = recoveryTopologyWaitGeneration
   if (topologyDispatchQueued) {
     return
   }
@@ -250,10 +256,9 @@ function queueRecoveryTopologyChange(change: TerminalPaneAuthorityTopologyChange
   queueMicrotask(() => {
     topologyDispatchQueued = false
     const queued = queuedTopologyChange
-    const waitGeneration = queuedTopologyWaitGeneration
     queuedTopologyChange = null
     if (queued) {
-      dispatchRecoveryTopologyChange(queued, waitGeneration)
+      dispatchRecoveryTopologyChange(queued)
     }
   })
 }
