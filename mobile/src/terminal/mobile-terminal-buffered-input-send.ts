@@ -1,10 +1,12 @@
 import type { RpcClient } from '../transport/rpc-client'
-import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
-import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import { isTerminalSendRpcAccepted } from './terminal-send-rpc-response'
+import type { TerminalLiveInputSendOutcome } from './terminal-live-input-sender'
 import { buildTerminalSendParams, TERMINAL_INPUT_SEND_OPTIONS } from './terminal-send-request'
+import {
+  getTerminalSendRpcFailureOutcome,
+  getTerminalSendRpcResponseOutcome
+} from './terminal-send-rpc-outcome'
 
-export type MobileTerminalBufferedInputSendOutcome = 'accepted' | 'rejected' | 'unknown'
+export type MobileTerminalBufferedInputSendOutcome = TerminalLiveInputSendOutcome
 
 export async function sendMobileTerminalBufferedInput(args: {
   readonly client: Pick<RpcClient, 'sendRequest'>
@@ -23,11 +25,9 @@ export async function sendMobileTerminalBufferedInput(args: {
       }),
       TERMINAL_INPUT_SEND_OPTIONS
     )
-    return isTerminalSendRpcAccepted(response) ? 'accepted' : 'rejected'
+    return getTerminalSendRpcResponseOutcome(response)
   } catch (error) {
-    return isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)
-      ? 'unknown'
-      : 'rejected'
+    return getTerminalSendRpcFailureOutcome(error)
   }
 }
 

@@ -127,7 +127,7 @@ import type {
   TerminalLiveInputSender,
   TerminalLiveInputSendOutcome
 } from '../../../../src/terminal/terminal-live-input-sender'
-import { isTerminalLiveInputSendAccepted } from '../../../../src/terminal/terminal-live-input-sender'
+import { reportTerminalLiveInputBoundaryOutcome } from '../../../../src/terminal/terminal-live-input-sender'
 import { sendMobileTerminalLiveInput } from '../../../../src/terminal/mobile-terminal-live-input-send'
 import {
   mergeRejectedTerminalBufferedInput,
@@ -1236,8 +1236,11 @@ export default function SessionScreen() {
           ),
         notifyInserted: () => showToast('Dictation inserted'),
         sendLiveText: (handle, transcript) =>
-          sendLiveInputExternalBoundary(handle, async () =>
-            isTerminalLiveInputSendAccepted(await sendLiveTerminalInput(handle, transcript))
+          sendLiveInputExternalBoundary(handle, async (isBoundaryCurrent) =>
+            reportTerminalLiveInputBoundaryOutcome(
+              isBoundaryCurrent,
+              await sendLiveTerminalInput(handle, transcript)
+            )
           ),
         text
       })
@@ -3007,15 +3010,18 @@ export default function SessionScreen() {
       async () => {
         setInput('')
         let outcome: MobileTerminalBufferedInputSendOutcome = 'rejected'
-        const accepted = await sendLiveInputExternalBoundary(targetHandle, async () => {
-          outcome = await sendMobileTerminalBufferedInput({
-            client,
-            deviceToken: deviceTokenRef.current,
-            targetHandle,
-            text
-          })
-          return outcome === 'accepted'
-        })
+        const accepted = await sendLiveInputExternalBoundary(
+          targetHandle,
+          async (isBoundaryCurrent) => {
+            outcome = await sendMobileTerminalBufferedInput({
+              client,
+              deviceToken: deviceTokenRef.current,
+              targetHandle,
+              text
+            })
+            return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, outcome)
+          }
+        )
         return accepted ? 'accepted' : outcome
       },
       () => setInput((current) => mergeRejectedTerminalBufferedInput(text, current)),
@@ -3035,19 +3041,21 @@ export default function SessionScreen() {
     if (accessoryCommit.kind !== 'allow-raw' || !isInputCurrent()) {
       return
     }
-    await sendLiveInputExternalBoundary(targetHandle, () =>
-      isInputCurrent()
-        ? sendTerminalLiveAccessoryRawBytes({
-            client: clientRef.current,
-            targetHandle,
-            activeHandle: activeHandleRef.current,
-            activeSessionTabType: activeSessionTabTypeRef.current,
-            connState: connStateRef.current,
-            bytes: input.bytes,
-            deviceToken: deviceTokenRef.current
-          })
-        : Promise.resolve(false)
-    )
+    await sendLiveInputExternalBoundary(targetHandle, async (isBoundaryCurrent) => {
+      if (!isInputCurrent()) {
+        return false
+      }
+      const outcome = await sendTerminalLiveAccessoryRawBytes({
+        client: clientRef.current,
+        targetHandle,
+        activeHandle: activeHandleRef.current,
+        activeSessionTabType: activeSessionTabTypeRef.current,
+        connState: connStateRef.current,
+        bytes: input.bytes,
+        deviceToken: deviceTokenRef.current
+      })
+      return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, outcome)
+    })
   }
 
   const sendLiveTerminalInput = useCallback(

@@ -4,8 +4,14 @@ import {
   saveMobileClipboardImageAsTempFile
 } from './mobile-clipboard-image'
 import type { MobileImageSource, PickedMobileImage } from './mobile-image-source-picker'
-import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
-import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import {
+  reportTerminalLiveInputBoundaryOutcome,
+  type TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
+import {
+  getTerminalSendRpcFailureOutcome,
+  getTerminalSendRpcResponseOutcome
+} from '../terminal/terminal-send-rpc-outcome'
 import { sendMobileTerminalPasteRequest } from './mobile-terminal-paste-request'
 
 export type AttachMobileImageDeps = {
@@ -62,12 +68,23 @@ export async function attachMobileImageToTerminal(
     }
     // Why: generated image paths always use desktop-compatible bracketed paste.
     const payload = buildMobileImagePastePayload(imagePath)
-    const response = await sendMobileTerminalPasteRequest(client, {
-      terminal,
-      text: payload,
-      deviceToken
-    })
-    return isBoundaryCurrent() && isTerminalSendRpcAccepted(response)
+    try {
+      const response = await sendMobileTerminalPasteRequest(client, {
+        terminal,
+        text: payload,
+        deviceToken
+      })
+      return reportTerminalLiveInputBoundaryOutcome(
+        isBoundaryCurrent,
+        getTerminalSendRpcResponseOutcome(response)
+      )
+    } catch (error) {
+      reportTerminalLiveInputBoundaryOutcome(
+        isBoundaryCurrent,
+        getTerminalSendRpcFailureOutcome(error)
+      )
+      throw error
+    }
   }
   return sendTerminalBoundary
     ? sendTerminalBoundary(terminal, uploadAndSend)

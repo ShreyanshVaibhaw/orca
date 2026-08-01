@@ -433,6 +433,18 @@ describe('terminal live input commit hook', () => {
     harness.unmount()
   })
 
+  it('does not consume stale recovery after the field changes away and back', async () => {
+    const harness = await createRecoveredReturnHarness()
+    harness.handlers.handleLiveInputChange('\rき\rく')
+    await vi.waitFor(() => expect(harness.sent.slice(3)).toEqual(['\rき\r']))
+    harness.handlers.handleLiveInputChange('\rき\r')
+
+    harness.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(harness.sent.slice(3)).toEqual(['\rき\r', '\r']))
+    harness.unmount()
+  })
+
   it('drops dependent fields after an unknown return without replaying it', async () => {
     const firstReturn = createDeferredOutcome()
     const onDeliveryUnknown = vi.fn()
@@ -600,6 +612,70 @@ describe('terminal live input commit hook', () => {
       expect(harness.captures.at(-1)).toBe('き')
       harness.handlers.handleLiveInputSubmit()
       await vi.waitFor(() => expect(harness.sent).toEqual(['き', '\r']))
+      harness.unmount()
+    }
+  )
+
+  it('preserves kana entered behind a definitely rejected external send', async () => {
+    const deferred = createDeferredOutcome()
+    const onDeliveryUnknown = vi.fn()
+    const started = vi.fn()
+    const harness = createTerminalLiveInputCommitHarness({ onDeliveryUnknown })
+    const boundary = harness.handlers.sendLiveInputExternalBoundary(
+      'terminal-a',
+      async (isBoundaryCurrent) => {
+        started()
+        const outcome = await deferred.promise
+        isBoundaryCurrent.reportSendOutcome?.(outcome)
+        return false
+      }
+    )
+    await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+    harness.handlers.handleLiveInputChange('き')
+
+    deferred.resolve('rejected')
+
+    await expect(boundary).resolves.toBe(false)
+    expect(harness.captures.at(-1)).toBe('き')
+    expect(onDeliveryUnknown).not.toHaveBeenCalled()
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['き', '\r']))
+    harness.unmount()
+  })
+
+  it.each(['returns false', 'throws'] as const)(
+    'drops kana entered behind a delivery-unknown external send that %s',
+    async (failure) => {
+      const deferred = createDeferredOutcome()
+      const onDeliveryUnknown = vi.fn()
+      const started = vi.fn()
+      const harness = createTerminalLiveInputCommitHarness({ onDeliveryUnknown })
+      const boundary = harness.handlers.sendLiveInputExternalBoundary(
+        'terminal-a',
+        async (isBoundaryCurrent) => {
+          started()
+          const outcome = await deferred.promise
+          isBoundaryCurrent.reportSendOutcome?.(outcome)
+          if (failure === 'throws') {
+            throw new Error('external send failed after dispatch')
+          }
+          return false
+        }
+      )
+      await vi.waitFor(() => expect(started).toHaveBeenCalledOnce())
+      harness.handlers.handleLiveInputChange('き')
+
+      deferred.resolve('unknown')
+
+      if (failure === 'throws') {
+        await expect(boundary).rejects.toThrow('external send failed after dispatch')
+      } else {
+        await expect(boundary).resolves.toBe(false)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(harness.captures.at(-1)).toBe('')
+      expect(harness.sent).toEqual([])
+      expect(onDeliveryUnknown).toHaveBeenCalledOnce()
       harness.unmount()
     }
   )

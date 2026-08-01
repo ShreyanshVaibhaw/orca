@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { sendTerminalLiveAccessoryRawBytes } from './terminal-live-accessory-raw-send'
 import type { RpcClient } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
+import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 
 function captureClient(
   result: Promise<unknown> = Promise.resolve({
@@ -25,7 +27,9 @@ describe('terminal live accessory raw send', () => {
   it('sends raw bytes now-or-never with the device presence tag', async () => {
     const { client, sendRequest } = captureClient()
 
-    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(true)
+    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(
+      'accepted'
+    )
 
     expect(sendRequest).toHaveBeenCalledWith(
       'terminal.send',
@@ -40,7 +44,7 @@ describe('terminal live accessory raw send', () => {
 
     await expect(
       sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, connState: 'reconnecting' })
-    ).resolves.toBe(false)
+    ).resolves.toBe('rejected')
 
     expect(sendRequest).not.toHaveBeenCalled()
   })
@@ -50,7 +54,7 @@ describe('terminal live accessory raw send', () => {
 
     await expect(
       sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, activeHandle: 'terminal-b' })
-    ).resolves.toBe(false)
+    ).resolves.toBe('rejected')
 
     expect(sendRequest).not.toHaveBeenCalled()
   })
@@ -58,6 +62,19 @@ describe('terminal live accessory raw send', () => {
   it('swallows a rejected send so accessory taps never surface transport errors', async () => {
     const { client } = captureClient(Promise.reject(new Error('Not connected: terminal.send')))
 
-    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(false)
+    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(
+      'rejected'
+    )
+  })
+
+  it.each([
+    ['delivery-unknown failure', markRpcDeliveryUnknown(new Error('response lost'))],
+    ['logical cutover', new LogicalClientCutoverError()]
+  ])('preserves %s without allowing later input to overtake it', async (_label, error) => {
+    const { client } = captureClient(Promise.reject(error))
+
+    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(
+      'unknown'
+    )
   })
 })

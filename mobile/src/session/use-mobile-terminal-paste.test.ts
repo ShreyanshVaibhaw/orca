@@ -3,8 +3,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import * as Clipboard from 'expo-clipboard'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
-import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
 import type { RpcClient } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import type { ConnectionState } from '../transport/types'
 import { useMobileTerminalPaste } from './use-mobile-terminal-paste'
 
@@ -224,5 +228,23 @@ it.each([
 
   expect(onSuccess).not.toHaveBeenCalled()
   expect(refreshCanPaste).not.toHaveBeenCalled()
+  act(() => renderer.unmount())
+})
+
+it('reports an ambiguous physical paste send to the live-input boundary', async () => {
+  vi.mocked(Clipboard.getStringAsync).mockResolvedValue('echo uncertain\n')
+  const reportSendOutcome = vi.fn()
+  const reportingBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+    const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+    isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+    return send(isBoundaryCurrent)
+  }
+  const inputScopeRef = { current: 'host-a\0worktree-a' }
+  const { paste, renderer, sendRequest } = renderPaste(inputScopeRef, reportingBoundary)
+  sendRequest.mockRejectedValueOnce(markRpcDeliveryUnknown(new Error('response lost')))
+
+  await paste()
+
+  expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
   act(() => renderer.unmount())
 })

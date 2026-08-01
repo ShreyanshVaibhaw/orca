@@ -1,6 +1,10 @@
 import { getTerminalLiveAccessoryRawSendTarget } from './terminal-live-accessory-raw-send-target'
-import { isTerminalSendRpcAccepted } from './terminal-send-rpc-response'
+import type { TerminalLiveInputSendOutcome } from './terminal-live-input-sender'
 import { buildTerminalSendParams, TERMINAL_INPUT_SEND_OPTIONS } from './terminal-send-request'
+import {
+  getTerminalSendRpcFailureOutcome,
+  getTerminalSendRpcResponseOutcome
+} from './terminal-send-rpc-outcome'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 
@@ -16,7 +20,7 @@ type TerminalLiveAccessoryRawSendArgs = {
 
 export async function sendTerminalLiveAccessoryRawBytes(
   args: TerminalLiveAccessoryRawSendArgs
-): Promise<boolean> {
+): Promise<TerminalLiveInputSendOutcome> {
   // Why: async IME flushing can outlive the original terminal selection.
   const rawSendTarget = getTerminalLiveAccessoryRawSendTarget({
     targetHandle: args.targetHandle,
@@ -24,7 +28,7 @@ export async function sendTerminalLiveAccessoryRawBytes(
     activeSessionTabType: args.activeSessionTabType
   })
   if (!args.client || !rawSendTarget || args.connState !== 'connected') {
-    return false
+    return 'rejected'
   }
   return args.client
     .sendRequest(
@@ -37,5 +41,5 @@ export async function sendTerminalLiveAccessoryRawBytes(
       }),
       TERMINAL_INPUT_SEND_OPTIONS
     )
-    .then(isTerminalSendRpcAccepted, () => false)
+    .then(getTerminalSendRpcResponseOutcome, getTerminalSendRpcFailureOutcome)
 }

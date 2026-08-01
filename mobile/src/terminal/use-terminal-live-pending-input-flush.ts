@@ -236,6 +236,9 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
 
   const applyLiveInputMirror = useCallback(
     (handle: string, fieldText: string, captureText = fieldText): void => {
+      if (boundaryFieldRecoveryRef.current.recoveredBoundary?.fieldText !== fieldText) {
+        boundaryFieldRecoveryRef.current.recoveredBoundary = null
+      }
       boundaryFieldRecoveryRef.current.currentCaptureText = captureText
       void runMirrorStep(handle, fieldText, false)
     },
@@ -258,6 +261,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
     liveInputRef,
     liveInputScope,
     liveInputTerminalHandlesRef,
+    onDeliveryUnknown,
     pendingLiveInputFlushRef,
     pendingLiveInputHandleRef,
     runMirrorStep,

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RpcClient, SendRequestOptions } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import type { RpcResponse, RpcSuccess } from '../transport/types'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
 import { attachMobileImageToTerminal } from './mobile-image-attachment'
 
 function ok(id: string, result: unknown): RpcSuccess {
@@ -15,7 +20,7 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   return { promise, resolve: resolvePromise }
 }
 
-function clientWithResponses(responses: RpcResponse[]): Pick<RpcClient, 'sendRequest'> & {
+function clientWithResponses(responses: (RpcResponse | Error)[]): Pick<RpcClient, 'sendRequest'> & {
   calls: { method: string; params: unknown; options?: SendRequestOptions }[]
 } {
   const calls: { method: string; params: unknown; options?: SendRequestOptions }[] = []
@@ -26,6 +31,9 @@ function clientWithResponses(responses: RpcResponse[]): Pick<RpcClient, 'sendReq
       const response = responses.shift()
       if (!response) {
         throw new Error(`unexpected request: ${method}`)
+      }
+      if (response instanceof Error) {
+        throw response
       }
       return response
     })
@@ -250,5 +258,36 @@ describe('attachMobileImageToTerminal', () => {
     })
 
     expect(sent).toBe(false)
+  })
+
+  it('reports an ambiguous image-path send to the live-input boundary', async () => {
+    const client = clientWithResponses([
+      {
+        id: 'start',
+        ok: false,
+        error: { code: 'method_not_found', message: 'no' },
+        _meta: { runtimeId: 'r' }
+      },
+      ok('save', '/tmp/uncertain.png'),
+      markRpcDeliveryUnknown(new Error('response lost'))
+    ])
+    const reportSendOutcome = vi.fn()
+    const sendTerminalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+      const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+      isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+      return send(isBoundaryCurrent)
+    }
+
+    await expect(
+      attachMobileImageToTerminal('library', {
+        client,
+        terminal: 'term-uncertain',
+        deviceToken: null,
+        getConnectionId: async () => null,
+        pickImage: vi.fn().mockResolvedValue({ base64: 'FFFF' }),
+        sendTerminalBoundary
+      })
+    ).rejects.toThrow('response lost')
+    expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
   })
 })

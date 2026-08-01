@@ -33,6 +33,7 @@ type TerminalLiveInputBoundaryOptions<TTabType extends string> = {
   readonly liveInputRef: RefObject<TextInput | null>
   readonly liveInputScope: string
   readonly liveInputTerminalHandlesRef: RefObject<Set<string>>
+  readonly onDeliveryUnknown: () => void
   readonly pendingLiveInputFlushRef: TerminalLivePendingFlushState
   readonly pendingLiveInputHandleRef: RefObject<string | null>
   readonly runMirrorStep: (
@@ -60,6 +61,7 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
   liveInputRef,
   liveInputScope,
   liveInputTerminalHandlesRef,
+  onDeliveryUnknown,
   pendingLiveInputFlushRef,
   pendingLiveInputHandleRef,
   runMirrorStep,
@@ -117,6 +119,9 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
           lifecycleEpoch === lifecycleEpochRef.current &&
           liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current
         isBoundaryCurrent.reportSendOutcome = (outcome) => {
+          if (outcome === 'unknown' && sendOutcome !== 'unknown' && recoveryBytes === undefined) {
+            onDeliveryUnknown()
+          }
           sendOutcome = outcome
         }
         return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, async () => {
@@ -139,7 +144,11 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
               sent = await sendBoundary(isBoundaryCurrent)
             }
           } catch (error) {
-            if (isBoundaryCurrent() && (sendOutcome === 'rejected' || sendOutcome === 'unknown')) {
+            if (
+              isBoundaryCurrent() &&
+              (sendOutcome === 'unknown' ||
+                (sendOutcome === 'rejected' && recoveryBytes !== undefined))
+            ) {
               invalidateBoundaryDependents(sendOutcome)
             }
             throw error
@@ -150,7 +159,10 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
           if (sent) {
             return true
           }
-          if (sendOutcome === 'rejected' || sendOutcome === 'unknown') {
+          if (
+            sendOutcome === 'unknown' ||
+            (sendOutcome === 'rejected' && recoveryBytes !== undefined)
+          ) {
             invalidateBoundaryDependents(sendOutcome)
           }
           return false
@@ -215,6 +227,7 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       liveInputRef,
       liveInputScope,
       liveInputTerminalHandlesRef,
+      onDeliveryUnknown,
       pendingLiveInputFlushRef,
       pendingLiveInputHandleRef,
       runMirrorStep,

@@ -8,7 +8,7 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { sendMobileTerminalLiveInput } from './mobile-terminal-live-input-send'
 import {
-  isTerminalLiveInputSendAccepted,
+  reportTerminalLiveInputBoundaryOutcome,
   type TerminalLiveInputBoundarySender
 } from './terminal-live-input-sender'
 
@@ -97,11 +97,11 @@ export function useTerminalGestureInputQueue({
       const flushGeneration = Symbol('terminal-gesture-input-flush')
       inFlightRef.current.set(handle, flushGeneration)
       try {
-        await sendLiveInputExternalBoundary(handle, () => {
+        await sendLiveInputExternalBoundary(handle, async (isBoundaryCurrent) => {
           if (Date.now() - queued.lastUpdatedMs > TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS) {
-            return Promise.resolve(false)
+            return false
           }
-          return sendMobileTerminalLiveInput({
+          const outcome = await sendMobileTerminalLiveInput({
             client: clientRef.current,
             connState: connStateRef.current,
             targetHandle: handle,
@@ -109,7 +109,8 @@ export function useTerminalGestureInputQueue({
             activeSessionTabType: activeSessionTabTypeRef.current,
             text: queued.bytes,
             deviceToken: deviceTokenRef.current
-          }).then(isTerminalLiveInputSendAccepted)
+          })
+          return reportTerminalLiveInputBoundaryOutcome(isBoundaryCurrent, outcome)
         })
       } catch {
         // Transient failure

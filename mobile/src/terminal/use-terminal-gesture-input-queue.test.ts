@@ -2,8 +2,12 @@ import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import type { ConnectionState } from '../transport/types'
-import type { TerminalLiveInputBoundarySender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from './terminal-live-input-sender'
 import { queueTerminalLiveHandleSend } from './terminal-live-pending-flush-state'
 import { useTerminalGestureInputQueue } from './use-terminal-gesture-input-queue'
 
@@ -154,6 +158,27 @@ describe('terminal gesture input queue', () => {
     })
 
     expect(sendRequest).not.toHaveBeenCalled()
+    harness.unmount()
+  })
+
+  it('reports an ambiguous physical gesture send to the live-input boundary', async () => {
+    vi.useFakeTimers()
+    const sendRequest = vi
+      .fn()
+      .mockRejectedValue(markRpcDeliveryUnknown(new Error('response lost')))
+    const client = { sendRequest } as unknown as RpcClient
+    const reportSendOutcome = vi.fn()
+    const boundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+      const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+      isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+      return send(isBoundaryCurrent)
+    }
+    const harness = createGestureQueueHarness(client, boundary)
+
+    harness.enqueue('terminal-a', 'gesture', 1)
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+
+    await vi.waitFor(() => expect(reportSendOutcome).toHaveBeenCalledWith('unknown'))
     harness.unmount()
   })
 })

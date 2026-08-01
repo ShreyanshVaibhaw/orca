@@ -1,5 +1,8 @@
 import { useCallback } from 'react'
-import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
 
 type CurrentRef<T> = { readonly current: T }
 
@@ -43,8 +46,9 @@ export function useMobileAttachmentInputLeaseGate({
       }
 
       return sendLiveInputExternalBoundary(targetHandle, async (isBoundaryCurrent) => {
-        const isAttachmentCurrent = (): boolean =>
+        const isAttachmentCurrent: TerminalLiveInputBoundaryCurrent = (): boolean =>
           isBoundaryCurrent() && isTargetCurrent() && nativeChatInputLeaseReadyRef.current
+        isAttachmentCurrent.reportSendOutcome = isBoundaryCurrent.reportSendOutcome
         const deadline = Date.now() + LEASE_READY_TIMEOUT_MS
         while (
           isBoundaryCurrent() &&

@@ -2,8 +2,14 @@ import { useCallback, type RefObject } from 'react'
 import * as Clipboard from 'expo-clipboard'
 import { File as FsFile, Paths } from 'expo-file-system'
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
-import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
-import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import {
+  reportTerminalLiveInputBoundaryOutcome,
+  type TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
+import {
+  getTerminalSendRpcFailureOutcome,
+  getTerminalSendRpcResponseOutcome
+} from '../terminal/terminal-send-rpc-outcome'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
@@ -178,12 +184,23 @@ export function useMobileTerminalPaste({
         ) {
           return false
         }
-        const response = await sendMobileTerminalPasteRequest(currentClient, {
-          terminal: targetHandle,
-          text: payload,
-          deviceToken: deviceTokenRef.current
-        })
-        return isBoundaryCurrent() && isTerminalSendRpcAccepted(response)
+        try {
+          const response = await sendMobileTerminalPasteRequest(currentClient, {
+            terminal: targetHandle,
+            text: payload,
+            deviceToken: deviceTokenRef.current
+          })
+          return reportTerminalLiveInputBoundaryOutcome(
+            isBoundaryCurrent,
+            getTerminalSendRpcResponseOutcome(response)
+          )
+        } catch (error) {
+          reportTerminalLiveInputBoundaryOutcome(
+            isBoundaryCurrent,
+            getTerminalSendRpcFailureOutcome(error)
+          )
+          throw error
+        }
       })
       if (!sent) {
         return

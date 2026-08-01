@@ -154,8 +154,10 @@ describe('session route offline-compose wiring', () => {
       'async function handleSend()',
       'async function handleAccessoryKey'
     )
-    expect(bufferedSend).toContain('sendLiveInputExternalBoundary(targetHandle')
+    expect(bufferedSend).toContain('sendLiveInputExternalBoundary(')
+    expect(bufferedSend).toContain('targetHandle,')
     expect(bufferedSend).toContain('sendMobileTerminalBufferedInput({')
+    expect(bufferedSend).toContain('reportTerminalLiveInputBoundaryOutcome')
 
     const rawAccessorySend = routeSlice(
       'async function handleAccessoryKey',
@@ -163,6 +165,7 @@ describe('session route offline-compose wiring', () => {
     )
     expect(rawAccessorySend).toContain('sendLiveInputExternalBoundary(targetHandle')
     expect(rawAccessorySend).toContain('sendTerminalLiveAccessoryRawBytes({')
+    expect(rawAccessorySend).toContain('reportTerminalLiveInputBoundaryOutcome')
 
     const gestureQueueHook = routeSlice(
       'useTerminalGestureInputQueue({',
@@ -171,6 +174,7 @@ describe('session route offline-compose wiring', () => {
     expect(gestureQueueHook).toContain('liveInputProducerGeneration')
     expect(gestureInputQueueSource).toContain('sendLiveInputExternalBoundary(handle')
     expect(gestureInputQueueSource).toContain('sendMobileTerminalLiveInput({')
+    expect(gestureInputQueueSource).toContain('reportTerminalLiveInputBoundaryOutcome')
     expect(TERMINAL_INPUT_SEND_OPTIONS).toEqual({ failWhenDisconnected: true })
   })
 

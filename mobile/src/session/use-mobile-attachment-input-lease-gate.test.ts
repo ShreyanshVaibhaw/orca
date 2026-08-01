@@ -1,7 +1,10 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from '../terminal/terminal-live-input-sender'
 import { useMobileAttachmentInputLeaseGate } from './use-mobile-attachment-input-lease-gate'
 
 type Gate = TerminalLiveInputBoundarySender
@@ -82,6 +85,28 @@ describe('useMobileAttachmentInputLeaseGate', () => {
 
     await expect(gate()('terminal-1', sendBoundary)).resolves.toBe(true)
     expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('forwards physical send outcomes through the attachment lease check', async () => {
+    const refs = baseRefs()
+    const reportSendOutcome = vi.fn()
+    const sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+      const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () => true
+      isBoundaryCurrent.reportSendOutcome = reportSendOutcome
+      return send(isBoundaryCurrent)
+    }
+    const { gate } = renderGate({
+      ...refs,
+      showToast: vi.fn(),
+      sendLiveInputExternalBoundary
+    })
+
+    await gate()('terminal-1', async (isBoundaryCurrent) => {
+      isBoundaryCurrent.reportSendOutcome?.('unknown')
+      return false
+    })
+
+    expect(reportSendOutcome).toHaveBeenCalledWith('unknown')
   })
 
   it('waits out a lease-not-ready window and then sends', async () => {
