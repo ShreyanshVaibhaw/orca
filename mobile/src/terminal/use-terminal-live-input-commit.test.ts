@@ -312,7 +312,7 @@ describe('terminal live input commit hook', () => {
     harness.unmount()
   })
 
-  it('merges fields behind multiple queued boundaries after an earlier rejection', async () => {
+  it('preserves field boundaries behind an earlier mirror rejection', async () => {
     const firstSend = createDeferredOutcome()
     const harness = createTerminalLiveInputCommitHarness({
       send: async (_handle, bytes) => (bytes === 'か' ? firstSend.promise : 'accepted')
@@ -326,10 +326,10 @@ describe('terminal live input commit hook', () => {
     harness.handlers.handleLiveInputChange('け')
     firstSend.resolve('rejected')
 
-    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('かきくけ'))
+    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('かき\rく\rけ'))
     expect(harness.sent).toEqual(['か'])
     harness.handlers.handleLiveInputSubmit()
-    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かきくけ', '\r']))
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かき\rく\rけ', '\r']))
     harness.unmount()
   })
 
@@ -344,6 +344,82 @@ describe('terminal live input commit hook', () => {
 
     await vi.waitFor(() => expect(onDeliveryUnknown).toHaveBeenCalledOnce())
     expect(harness.sent).toEqual(['\r'])
+    harness.unmount()
+  })
+
+  it('retries a rejected return before dispatching the next submitted field', async () => {
+    const firstReturn = createDeferredOutcome()
+    const retriedReturn = createDeferredOutcome()
+    let returnCount = 0
+    const harness = createTerminalLiveInputCommitHarness({
+      send: async (_handle, bytes) => {
+        if (bytes !== '\r') {
+          return 'accepted'
+        }
+        returnCount += 1
+        return returnCount === 1 ? firstReturn.promise : retriedReturn.promise
+      }
+    })
+    harness.handlers.handleLiveInputChange('か')
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r']))
+    harness.handlers.handleLiveInputChange('き')
+    harness.handlers.handleLiveInputSubmit()
+
+    firstReturn.resolve('rejected')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r', '\r']))
+    retriedReturn.resolve('accepted')
+
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r', '\r', 'き', '\r']))
+    harness.unmount()
+  })
+
+  it('retains an exact boundary replay after two rejected return attempts', async () => {
+    const firstReturn = createDeferredOutcome()
+    let returnCount = 0
+    const harness = createTerminalLiveInputCommitHarness({
+      send: async (_handle, bytes) => {
+        if (bytes !== '\r') {
+          return 'accepted'
+        }
+        returnCount += 1
+        return returnCount === 1 ? firstReturn.promise : 'rejected'
+      }
+    })
+    harness.handlers.handleLiveInputChange('か')
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r']))
+    harness.handlers.handleLiveInputChange('き')
+    harness.handlers.handleLiveInputSubmit()
+
+    firstReturn.resolve('rejected')
+    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('\rき\r'))
+    expect(harness.sent).toEqual(['か', '\r', '\r'])
+    harness.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r', '\r', '\rき\r']))
+    harness.unmount()
+  })
+
+  it('drops dependent fields after an unknown return without replaying it', async () => {
+    const firstReturn = createDeferredOutcome()
+    const onDeliveryUnknown = vi.fn()
+    const harness = createTerminalLiveInputCommitHarness({
+      onDeliveryUnknown,
+      send: async (_handle, bytes) => (bytes === '\r' ? firstReturn.promise : 'accepted')
+    })
+    harness.handlers.handleLiveInputChange('か')
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', '\r']))
+    harness.handlers.handleLiveInputChange('き')
+    harness.handlers.handleLiveInputSubmit()
+
+    firstReturn.resolve('unknown')
+
+    await vi.waitFor(() => expect(onDeliveryUnknown).toHaveBeenCalledOnce())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.sent).toEqual(['か', '\r'])
+    expect(harness.captures.at(-1)).toBe('')
     harness.unmount()
   })
 

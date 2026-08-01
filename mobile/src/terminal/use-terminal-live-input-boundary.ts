@@ -1,11 +1,16 @@
 import { useCallback, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
 import {
+  recoverTerminalLiveRejectedBoundary,
   releaseTerminalLiveBoundaryField,
   reserveTerminalLiveBoundaryField,
   type TerminalLiveBoundaryFieldRecoveryState
 } from './terminal-live-boundary-field-recovery'
-import type { TerminalLiveInputBoundarySender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender,
+  TerminalLiveInputSendOutcome
+} from './terminal-live-input-sender'
 import {
   queueTerminalLiveBoundarySend,
   queueTerminalLiveHandleSend,
@@ -62,7 +67,7 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
   setLiveInputCapture
 }: TerminalLiveInputBoundaryOptions<TTabType>): TerminalLiveInputBoundarySender {
   return useCallback<TerminalLiveInputBoundarySender>(
-    (expectedHandle, sendBoundary) => {
+    (expectedHandle, sendBoundary, recoveryBytes) => {
       if (
         !inputStateReady ||
         disposedRef.current ||
@@ -73,16 +78,76 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       if (expectedHandle !== activeHandleRef.current) {
         return Promise.resolve(false)
       }
+      const consumeRecoveredBoundary = boundaryFieldRecoveryRef.current.consumeNextBoundary
       const lifecycleEpoch = lifecycleEpochRef.current
+      let recoveryToken: symbol | null = null
+      const invalidateBoundaryDependents = (
+        outcome: TerminalLiveInputSendOutcome | false
+      ): void => {
+        lifecycleEpochRef.current += 1
+        pendingLiveInputFlushRef.current = null
+        clearHeldCommitTimer()
+        if (outcome === 'rejected' && recoveryBytes !== undefined) {
+          const recovered = recoverTerminalLiveRejectedBoundary(
+            boundaryFieldRecoveryRef.current,
+            recoveryToken,
+            recoveryBytes,
+            currentLiveInputFieldTextRef.current
+          )
+          sentLiveInputTextRef.current = ''
+          currentLiveInputFieldTextRef.current = recovered.fieldText
+          heldLiveInputTextRef.current = recovered.fieldText
+          pendingLiveInputHandleRef.current = recovered.fieldText.length > 0 ? expectedHandle : null
+          setLiveInputCapture(recovered.captureText)
+          liveInputRef.current?.setNativeProps({ text: recovered.captureText })
+          return
+        }
+        clearPendingLiveInputCommit()
+      }
       const sendCurrentBoundary = (): Promise<boolean> => {
-        const isBoundaryCurrent = (): boolean =>
+        let sendOutcome: TerminalLiveInputSendOutcome | null = null
+        const isBoundaryCurrent: TerminalLiveInputBoundaryCurrent = () =>
           inputStateReady &&
           !disposedRef.current &&
           lifecycleEpoch === lifecycleEpochRef.current &&
           liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current
-        return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, () =>
-          isBoundaryCurrent() ? sendBoundary(isBoundaryCurrent) : Promise.resolve(false)
-        )
+        isBoundaryCurrent.reportSendOutcome = (outcome) => {
+          sendOutcome = outcome
+        }
+        return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, async () => {
+          if (!isBoundaryCurrent()) {
+            return false
+          }
+          if (consumeRecoveredBoundary) {
+            return true
+          }
+          let sent: boolean
+          try {
+            sent = await sendBoundary(isBoundaryCurrent)
+            if (
+              !sent &&
+              sendOutcome === 'rejected' &&
+              recoveryBytes !== undefined &&
+              isBoundaryCurrent()
+            ) {
+              sendOutcome = null
+              sent = await sendBoundary(isBoundaryCurrent)
+            }
+          } catch (error) {
+            if (isBoundaryCurrent()) {
+              invalidateBoundaryDependents('unknown')
+            }
+            throw error
+          }
+          if (!isBoundaryCurrent()) {
+            return false
+          }
+          if (sent) {
+            return true
+          }
+          invalidateBoundaryDependents(sendOutcome ?? false)
+          return false
+        })
       }
       const handle = pendingLiveInputHandleRef.current
       if (!handle) {
@@ -106,9 +171,11 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       if (heldLiveInputTextRef.current.length > 0 || fieldText !== sentLiveInputTextRef.current) {
         void runMirrorStep(handle, fieldText, true)
       }
-      const recoveryToken = reserveTerminalLiveBoundaryField(
+      recoveryToken = reserveTerminalLiveBoundaryField(
         boundaryFieldRecoveryRef.current,
-        fieldText
+        fieldText,
+        consumeRecoveredBoundary ? '' : (recoveryBytes ?? ''),
+        consumeRecoveredBoundary
       )
       const boundaryPromise = queueTerminalLiveBoundarySend(
         pendingLiveInputFlushRef,
@@ -123,7 +190,12 @@ export function useTerminalLiveInputBoundary<TTabType extends string>({
       liveInputRef.current?.setNativeProps({ text: '' })
       const releaseRecovery = (): void =>
         releaseTerminalLiveBoundaryField(boundaryFieldRecoveryRef.current, recoveryToken)
-      void boundaryPromise.then(releaseRecovery, releaseRecovery)
+      void boundaryPromise.then((sent) => {
+        releaseRecovery()
+        if (sent && consumeRecoveredBoundary) {
+          boundaryFieldRecoveryRef.current.consumeNextBoundary = false
+        }
+      }, releaseRecovery)
       return boundaryPromise
     },
     [

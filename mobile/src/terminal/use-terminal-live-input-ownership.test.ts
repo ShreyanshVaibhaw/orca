@@ -2,8 +2,16 @@ import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { expect, it, vi } from 'vitest'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputSender,
+  TerminalLiveInputSendOutcome
+} from './terminal-live-input-sender'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
+
+type DeferredOutcome = {
+  readonly promise: Promise<TerminalLiveInputSendOutcome>
+  readonly resolve: (value: TerminalLiveInputSendOutcome) => void
+}
 
 type DeferredBoolean = {
   readonly promise: Promise<boolean>
@@ -13,6 +21,14 @@ type DeferredBoolean = {
 function createDeferredBoolean(): DeferredBoolean {
   let resolvePromise: (value: boolean) => void = () => undefined
   const promise = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
+
+function createDeferredOutcome(): DeferredOutcome {
+  let resolvePromise: (value: TerminalLiveInputSendOutcome) => void = () => undefined
+  const promise = new Promise<TerminalLiveInputSendOutcome>((resolve) => {
     resolvePromise = resolve
   })
   return { promise, resolve: resolvePromise }
@@ -31,7 +47,9 @@ function suppressRendererWarning(): () => void {
 function createOwnershipHarness() {
   const activeHandleRef: RefObject<string | null> = { current: 'terminal-a' }
   const activeSessionTabTypeRef: RefObject<string | null> = { current: 'terminal' }
-  const firstSend = createDeferredBoolean()
+  const firstSend = createDeferredOutcome()
+  const captures: string[] = []
+  const onDeliveryUnknown = vi.fn()
   const sent: string[] = []
   let liveInputGeneration = Symbol('live-input-generation')
   let liveInputProducerGeneration = Symbol('live-input-producer-generation')
@@ -48,15 +66,14 @@ function createOwnershipHarness() {
       liveInputProducerGeneration,
       liveInputScope: 'terminal-live-input-ownership',
       liveInputTerminalHandlesRef: { current: new Set(['terminal-a', 'terminal-b']) },
+      onDeliveryUnknown,
       sendLiveTerminalInputRef: {
         current: async (_handle, bytes) => {
           sent.push(bytes)
-          return sent.length === 1
-            ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
-            : 'accepted'
+          return sent.length === 1 ? firstSend.promise : 'accepted'
         }
       } as RefObject<TerminalLiveInputSender>,
-      setLiveInputCapture: () => undefined
+      setLiveInputCapture: (text) => captures.push(text)
     })
     return null
   }
@@ -74,7 +91,9 @@ function createOwnershipHarness() {
   }
 
   return {
+    captures,
     firstSend,
+    onDeliveryUnknown,
     get handlers() {
       if (!handlers) {
         throw new Error('terminal live ownership hook is unavailable')
@@ -91,6 +110,10 @@ function createOwnershipHarness() {
     setScope(scope: string): void {
       liveInputGeneration = Symbol(scope)
       liveInputProducerGeneration = Symbol(`${scope}-producer`)
+      act(() => renderer?.update(createElement(Harness)))
+    },
+    setProducerGeneration(): void {
+      liveInputProducerGeneration = Symbol('next-producer-generation')
       act(() => renderer?.update(createElement(Harness)))
     },
     unmount(): void {
@@ -123,7 +146,7 @@ it('keeps a reused handle behind its started send while another handle stays ind
 
   await Promise.resolve()
   expect(harness.sent).toEqual(['か', 'terminal-b'])
-  harness.firstSend.resolve(true)
+  harness.firstSend.resolve('accepted')
 
   await expect(staleBoundary).resolves.toBe(false)
   await expect(currentBoundary).resolves.toBe(true)
@@ -146,7 +169,7 @@ it('cancels queued and producer boundaries across a reused-route scope ABA chang
   const producerSend = vi.fn(async () => true)
 
   await expect(staleExternalBoundary('terminal-a', producerSend)).resolves.toBe(false)
-  harness.firstSend.resolve(true)
+  harness.firstSend.resolve('accepted')
   await expect(queuedBoundary).resolves.toBe(false)
   expect(producerSend).not.toHaveBeenCalled()
   expect(harness.sent).toEqual(['か'])
@@ -219,9 +242,43 @@ it('cancels a queued mirror delta across a live-mode ABA change', async () => {
 
   harness.setOwner('terminal-a', null)
   harness.setOwner('terminal-a', 'terminal-a')
-  harness.firstSend.resolve(true)
+  harness.firstSend.resolve('accepted')
 
   await expect(staleFlush).resolves.toBe(false)
   expect(harness.sent).toEqual(['a'])
   harness.unmount()
+})
+
+it.each(['rejected', 'unknown'] as const)(
+  'ignores a deferred %s mirror outcome after only the producer generation changes',
+  async (outcome) => {
+    const harness = createOwnershipHarness()
+    harness.handlers.applyLiveInputMirror('terminal-a', 'a')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['a']))
+
+    harness.setProducerGeneration()
+    harness.firstSend.resolve(outcome)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.handlers.sentLiveInputTextRef.current).toBe('a')
+    expect(harness.captures).toEqual([])
+    expect(harness.onDeliveryUnknown).not.toHaveBeenCalled()
+    harness.unmount()
+  }
+)
+
+it('cancels a held-text timer after only the producer generation changes', async () => {
+  vi.useFakeTimers()
+  try {
+    const harness = createOwnershipHarness()
+    harness.handlers.applyLiveInputMirror('terminal-a', '한')
+
+    harness.setProducerGeneration()
+    await vi.runAllTimersAsync()
+
+    expect(harness.sent).toEqual([])
+    harness.unmount()
+  } finally {
+    vi.useRealTimers()
+  }
 })

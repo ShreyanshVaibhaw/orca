@@ -21,6 +21,7 @@ type TerminalLiveMirrorPayloadSendOptions = {
   readonly clearHeldCommitTimer: () => void
   readonly currentLiveInputFieldTextRef: MutableCell<string>
   readonly currentLiveInputGenerationRef: MutableCell<symbol>
+  readonly currentLiveInputProducerGenerationRef: MutableCell<symbol>
   readonly disposedRef: MutableCell<boolean>
   readonly fieldRecoveryGeneration: symbol
   readonly handle: string
@@ -29,6 +30,7 @@ type TerminalLiveMirrorPayloadSendOptions = {
   readonly lifecycleEpoch: number
   readonly lifecycleEpochRef: MutableCell<number>
   readonly liveInputGeneration: symbol
+  readonly liveInputProducerGeneration: symbol
   readonly liveInputRef: MutableCell<TextInput | null>
   readonly onDeliveryUnknown: () => void
   readonly payload: string
@@ -48,6 +50,7 @@ export function queueTerminalLiveMirrorPayloadSend({
   clearHeldCommitTimer,
   currentLiveInputFieldTextRef,
   currentLiveInputGenerationRef,
+  currentLiveInputProducerGenerationRef,
   disposedRef,
   fieldRecoveryGeneration,
   handle,
@@ -56,6 +59,7 @@ export function queueTerminalLiveMirrorPayloadSend({
   lifecycleEpoch,
   lifecycleEpochRef,
   liveInputGeneration,
+  liveInputProducerGeneration,
   liveInputRef,
   onDeliveryUnknown,
   payload,
@@ -75,6 +79,7 @@ export function queueTerminalLiveMirrorPayloadSend({
     !disposedRef.current &&
     lifecycleEpoch === lifecycleEpochRef.current &&
     liveInputGeneration === currentLiveInputGenerationRef.current &&
+    liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current &&
     fieldRecoveryGeneration === boundaryFieldRecoveryRef.current.generation
   let outcome: TerminalLiveInputSendOutcome | null = null
   const mirrorSend = queueTerminalLiveMirrorSend(pendingLiveInputFlushRef, () =>

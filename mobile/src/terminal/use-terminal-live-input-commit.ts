@@ -195,8 +195,11 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
           return
         case 'send-now':
         case 'commit-held-then-send':
-          void runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
-            sendLiveInputBoundaryBytes(activeHandle, decision.bytes, isBoundaryCurrent)
+          void runLiveInputBoundary(
+            activeHandle,
+            (isBoundaryCurrent) =>
+              sendLiveInputBoundaryBytes(activeHandle, decision.bytes, isBoundaryCurrent),
+            decision.bytes
           )
           return
         default:
@@ -239,8 +242,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     ) {
       return
     }
-    void runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
-      sendLiveInputBoundaryBytes(activeHandle, '\r', isBoundaryCurrent)
+    void runLiveInputBoundary(
+      activeHandle,
+      (isBoundaryCurrent) => sendLiveInputBoundaryBytes(activeHandle, '\r', isBoundaryCurrent),
+      '\r'
     )
   }, [
     activeHandle,

@@ -6,7 +6,10 @@ import {
 } from './terminal-live-text-commit'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import type { TerminalLiveBoundaryByteSender } from './terminal-live-boundary-byte-send'
-import type { TerminalLiveInputBoundarySender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputBoundaryCurrent,
+  TerminalLiveInputBoundarySender
+} from './terminal-live-input-sender'
 
 export type TerminalLiveAccessoryInputCommitResult =
   | { readonly kind: 'allow-raw' }
@@ -87,12 +90,15 @@ export function useTerminalLiveAccessoryInputCommit({
       switch (decision.kind) {
         case 'send-now':
         case 'commit-held-then-send':
-          await runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
-            sendLiveInputBoundaryBytes(
-              activeHandle,
-              decision.bytes,
-              () => isInputCurrent() && isBoundaryCurrent()
-            )
+          await runLiveInputBoundary(
+            activeHandle,
+            (isBoundaryCurrent) => {
+              const isCurrent: TerminalLiveInputBoundaryCurrent = () =>
+                isInputCurrent() && isBoundaryCurrent()
+              isCurrent.reportSendOutcome = isBoundaryCurrent.reportSendOutcome
+              return sendLiveInputBoundaryBytes(activeHandle, decision.bytes, isCurrent)
+            },
+            decision.bytes
           )
           return { kind: 'handled' }
         case 'local-edit': {

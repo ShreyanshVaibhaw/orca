@@ -9,7 +9,10 @@ export type TerminalLiveInputSender = (
   bytes: string
 ) => Promise<TerminalLiveInputSendOutcome>
 
-export type TerminalLiveInputBoundaryCurrent = () => boolean
+export type TerminalLiveInputBoundaryCurrent = {
+  (): boolean
+  reportSendOutcome?: (outcome: TerminalLiveInputSendOutcome) => void
+}
 
 export type TerminalLiveInputBoundarySend = (
   isBoundaryCurrent: TerminalLiveInputBoundaryCurrent
@@ -17,5 +20,6 @@ export type TerminalLiveInputBoundarySend = (
 
 export type TerminalLiveInputBoundarySender = (
   handle: string,
-  sendBoundary: TerminalLiveInputBoundarySend
+  sendBoundary: TerminalLiveInputBoundarySend,
+  recoveryBytes?: string
 ) => Promise<boolean>

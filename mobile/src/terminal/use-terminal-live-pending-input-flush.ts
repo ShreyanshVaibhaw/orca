@@ -133,7 +133,8 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       if (
         !inputStateReady ||
         disposedRef.current ||
-        liveInputGeneration !== currentLiveInputGenerationRef.current
+        liveInputGeneration !== currentLiveInputGenerationRef.current ||
+        liveInputProducerGeneration !== currentLiveInputProducerGenerationRef.current
       ) {
         return false
       }
@@ -173,7 +174,8 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
           if (
             disposedRef.current ||
             lifecycleEpoch !== lifecycleEpochRef.current ||
-            liveInputGeneration !== currentLiveInputGenerationRef.current
+            liveInputGeneration !== currentLiveInputGenerationRef.current ||
+            liveInputProducerGeneration !== currentLiveInputProducerGenerationRef.current
           ) {
             return
           }
@@ -188,6 +190,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         boundaryFieldRecoveryRef,
         currentLiveInputFieldTextRef,
         currentLiveInputGenerationRef,
+        currentLiveInputProducerGenerationRef,
         disposedRef,
         fieldRecoveryGeneration,
         handle,
@@ -196,6 +199,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         lifecycleEpoch: lifecycleEpochRef.current,
         lifecycleEpochRef,
         liveInputGeneration,
+        liveInputProducerGeneration,
         liveInputRef,
         onDeliveryUnknown,
         payload,
@@ -215,6 +219,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       clearHeldCommitTimer,
       inputStateReady,
       liveInputGeneration,
+      liveInputProducerGeneration,
       liveInputRef,
       liveInputScope,
       liveInputTerminalHandlesRef,

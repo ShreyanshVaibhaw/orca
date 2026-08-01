@@ -240,7 +240,11 @@ describe('terminal live accessory input commit hook', () => {
     const result = await harness.commit({ bytes: '\x1b' })
 
     // Then
-    expect(harness.runLiveInputBoundary).toHaveBeenCalledWith('terminal-a', expect.any(Function))
+    expect(harness.runLiveInputBoundary).toHaveBeenCalledWith(
+      'terminal-a',
+      expect.any(Function),
+      '\x1b'
+    )
     expect(harness.sent).toEqual(['\x1b'])
     expect(result).toEqual({ kind: 'handled' })
   })
@@ -254,7 +258,11 @@ describe('terminal live accessory input commit hook', () => {
 
     // Then
     expect(result).toEqual({ kind: 'handled' })
-    expect(harness.runLiveInputBoundary).toHaveBeenCalledWith('terminal-a', expect.any(Function))
+    expect(harness.runLiveInputBoundary).toHaveBeenCalledWith(
+      'terminal-a',
+      expect.any(Function),
+      '\x1b'
+    )
     expect(harness.sent).toEqual(['\x1b'])
   })
 

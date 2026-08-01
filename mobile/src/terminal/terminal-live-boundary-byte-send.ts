@@ -36,6 +36,7 @@ export async function sendTerminalLiveBoundaryBytes({
   if (!isBoundaryCurrent()) {
     return false
   }
+  isBoundaryCurrent.reportSendOutcome?.(outcome)
   if (outcome === 'unknown') {
     onDeliveryUnknown?.()
   }
