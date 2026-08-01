@@ -17,21 +17,3 @@ export function recordWaitsForRecoveryTopology(
     getPreservedStablePaneRecoveryTabId(record, state) === null
   )
 }
-
-export function collectChangedSleepingAgentPaneKeys(
-  current: Record<string, SleepingAgentSessionRecord | undefined>,
-  previous: Record<string, SleepingAgentSessionRecord | undefined>
-): Set<string> {
-  const changed = new Set<string>()
-  for (const key of Object.keys(current)) {
-    if (!(key in previous) || current[key] !== previous[key]) {
-      changed.add(key)
-    }
-  }
-  for (const key of Object.keys(previous)) {
-    if (!(key in current)) {
-      changed.add(key)
-    }
-  }
-  return changed
-}

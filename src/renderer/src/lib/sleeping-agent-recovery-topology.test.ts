@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAppStore } from '@/store'
+import { publishTerminalPaneAuthorityTopologyChange } from '@/store/terminal-pane-authority-topology-events'
 import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import {
@@ -76,6 +77,7 @@ describe('sleeping agent recovery topology', () => {
 
     waitForRecoveryTopology(WORKTREE_ID, [record], staleRecover)
     useAppStore.setState(hydratedTopology() as never)
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [WORKTREE_ID] })
     cancelRecoveryTopologyWait(WORKTREE_ID)
     useAppStore.setState(emptyTopology() as never)
     waitForRecoveryTopology(WORKTREE_ID, [record], currentRecover)
@@ -84,9 +86,71 @@ describe('sleeping agent recovery topology', () => {
     expect(currentRecover).not.toHaveBeenCalled()
 
     useAppStore.setState(hydratedTopology() as never)
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [WORKTREE_ID] })
     await Promise.resolve()
 
     expect(currentRecover).toHaveBeenCalledOnce()
     expect(currentRecover).toHaveBeenCalledWith([record])
+  })
+
+  it('does not enumerate sleeping records for unrelated paced changes', async () => {
+    const records: Record<string, SleepingAgentSessionRecord> = {}
+    const tabsByWorktree: Record<string, []> = {}
+    const worktreeIds: string[] = []
+    for (let index = 0; index < 100; index += 1) {
+      const worktreeId = `worktree-${index}`
+      const tabId = `tab-${index}`
+      const leafId = `${index.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`
+      const candidate = {
+        ...record,
+        paneKey: makePaneKey(tabId, leafId),
+        tabId,
+        worktreeId,
+        providerSession: { key: 'session_id' as const, id: `session-${index}` }
+      }
+      records[candidate.paneKey] = candidate
+      tabsByWorktree[worktreeId] = []
+      worktreeIds.push(worktreeId)
+    }
+    useAppStore.setState({
+      tabsByWorktree,
+      ptyIdsByTabId: {},
+      terminalLayoutsByTabId: {},
+      sleepingAgentSessionsByPaneKey: records
+    } as never)
+    for (const worktreeId of worktreeIds) {
+      const candidate = Object.values(records).find((entry) => entry.worktreeId === worktreeId)
+      if (!candidate) {
+        throw new Error(`Missing recovery candidate for ${worktreeId}`)
+      }
+      waitForRecoveryTopology(worktreeId, [candidate], vi.fn())
+    }
+
+    let recordEnumerations = 0
+    let currentRecords = records
+    try {
+      for (let update = 0; update < 100; update += 1) {
+        const paneKey = `unrelated-${update}:leaf`
+        const nextRecords = {
+          ...currentRecords,
+          [paneKey]: { ...record, paneKey, worktreeId: 'unrelated-worktree' }
+        }
+        currentRecords = nextRecords
+        const observedRecords = new Proxy(nextRecords, {
+          ownKeys(target) {
+            recordEnumerations += 1
+            return Reflect.ownKeys(target)
+          }
+        })
+        useAppStore.setState({ sleepingAgentSessionsByPaneKey: observedRecords } as never)
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+        await Promise.resolve()
+      }
+      expect(recordEnumerations).toBe(0)
+    } finally {
+      for (const worktreeId of worktreeIds) {
+        cancelRecoveryTopologyWait(worktreeId)
+      }
+    }
   })
 })

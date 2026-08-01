@@ -607,8 +607,13 @@ export function removeSleepingRecordsReplacedByManualWorktreeSleep(
   records: Record<string, SleepingAgentSessionRecord>,
   worktreeId: string,
   paneKeys?: readonly string[]
-): { records: Record<string, SleepingAgentSessionRecord>; changed: boolean } {
+): {
+  records: Record<string, SleepingAgentSessionRecord>
+  changed: boolean
+  removedPaneKeys: string[]
+} {
   const allowedPaneKeys = paneKeys ? new Set(paneKeys) : null
+  const removedPaneKeys: string[] = []
   let next = records
   let changed = false
   for (const [paneKey, record] of Object.entries(records)) {
@@ -619,9 +624,10 @@ export function removeSleepingRecordsReplacedByManualWorktreeSleep(
       next = { ...records }
     }
     delete next[paneKey]
+    removedPaneKeys.push(paneKey)
     changed = true
   }
-  return { records: next, changed }
+  return { records: next, changed, removedPaneKeys }
 }
 
 export function collectSleepingAgentSessionRecordsForWorktree(
@@ -2742,6 +2748,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     },
 
     captureSleepingAgentSessionsByWorktree: (worktreeId, paneKeys) => {
+      const changedPaneKeys = new Set<string>()
       set((s) => {
         const records = collectSleepingAgentSessionRecordsForWorktree(s, worktreeId, {
           paneKeys,
@@ -2754,17 +2761,23 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         )
         const next: Record<string, SleepingAgentSessionRecord> = { ...replaced.records }
         let changed = replaced.changed
+        for (const paneKey of replaced.removedPaneKeys) {
+          changedPaneKeys.add(paneKey)
+        }
 
         for (const record of Object.values(records)) {
           if (next[record.paneKey] !== record) {
             next[record.paneKey] = record
+            changedPaneKeys.add(record.paneKey)
             changed = true
           }
         }
 
         return changed ? { sleepingAgentSessionsByPaneKey: next } : s
       })
-      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
+      if (changedPaneKeys.size > 0) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...changedPaneKeys] })
+      }
     },
 
     captureAllSleepingAgentSessions: (mode) => {
@@ -2859,6 +2872,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     },
 
     clearSleepingAgentSessionsByWorktree: (worktreeId) => {
+      const removedPaneKeys: string[] = []
       set((s) => {
         let changed = false
         const next: Record<string, SleepingAgentSessionRecord> = {}
@@ -2866,6 +2880,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         for (const [paneKey, record] of Object.entries(s.sleepingAgentSessionsByPaneKey)) {
           if (record.worktreeId === worktreeId) {
             changed = true
+            removedPaneKeys.push(paneKey)
             launchConfigKeysToRemove.push(paneKey)
             continue
           }
@@ -2885,17 +2900,13 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             }
           : s
       })
-      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: [worktreeId] })
+      if (removedPaneKeys.length > 0) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: removedPaneKeys })
+      }
     },
 
     pruneSleepingAgentSessions: (validWorktreeIds) => {
-      const removedWorktreeIds = [
-        ...new Set(
-          Object.values(get().sleepingAgentSessionsByPaneKey)
-            .filter((record) => !validWorktreeIds.has(record.worktreeId))
-            .map((record) => record.worktreeId)
-        )
-      ]
+      const removedPaneKeys: string[] = []
       set((s) => {
         let changed = false
         const next: Record<string, SleepingAgentSessionRecord> = {}
@@ -2903,6 +2914,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         for (const [paneKey, record] of Object.entries(s.sleepingAgentSessionsByPaneKey)) {
           if (!validWorktreeIds.has(record.worktreeId)) {
             changed = true
+            removedPaneKeys.push(paneKey)
             launchConfigKeysToRemove.push(paneKey)
             continue
           }
@@ -2922,7 +2934,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             }
           : s
       })
-      publishTerminalPaneAuthorityTopologyChange({ worktreeIds: removedWorktreeIds })
+      if (removedPaneKeys.length > 0) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: removedPaneKeys })
+      }
     },
 
     retainAgents: (entries) => {

@@ -7,6 +7,8 @@ import {
   takePendingBackgroundTerminalWorktreeMount
 } from '../components/terminal/background-terminal-worktree-mount'
 import { useAppStore } from '@/store'
+import type { AppState } from '@/store/types'
+import { publishTerminalPaneAuthorityTopologyChange } from '@/store/terminal-pane-authority-topology-events'
 import { resumeSleepingAgentSessionsForWorktree } from './resume-sleeping-agent-session'
 import { cancelRecoveryTopologyWait } from './sleeping-agent-recovery-topology'
 
@@ -64,6 +66,58 @@ function makeRecord(
   }
 }
 
+function setAppStoreState(patch: Partial<AppState>): void {
+  const previous = useAppStore.getState()
+  useAppStore.setState(patch)
+  const current = useAppStore.getState()
+  const paneKeys = new Set<string>()
+  if (current.sleepingAgentSessionsByPaneKey !== previous.sleepingAgentSessionsByPaneKey) {
+    for (const paneKey of Object.keys(previous.sleepingAgentSessionsByPaneKey)) {
+      if (
+        current.sleepingAgentSessionsByPaneKey[paneKey] !==
+        previous.sleepingAgentSessionsByPaneKey[paneKey]
+      ) {
+        paneKeys.add(paneKey)
+      }
+    }
+    for (const paneKey of Object.keys(current.sleepingAgentSessionsByPaneKey)) {
+      if (
+        current.sleepingAgentSessionsByPaneKey[paneKey] !==
+        previous.sleepingAgentSessionsByPaneKey[paneKey]
+      ) {
+        paneKeys.add(paneKey)
+      }
+    }
+  }
+  const tabIds = new Set<string>()
+  const worktreeIds = new Set<string>()
+  if (current.tabsByWorktree !== previous.tabsByWorktree) {
+    for (const worktreeId of new Set([
+      ...Object.keys(previous.tabsByWorktree),
+      ...Object.keys(current.tabsByWorktree)
+    ])) {
+      const previousTabs = previous.tabsByWorktree[worktreeId] ?? []
+      const currentTabs = current.tabsByWorktree[worktreeId] ?? []
+      if (previousTabs === currentTabs) {
+        continue
+      }
+      worktreeIds.add(worktreeId)
+      const previousById = new Map(previousTabs.map((tab) => [tab.id, tab]))
+      const currentById = new Map(currentTabs.map((tab) => [tab.id, tab]))
+      for (const tabId of new Set([...previousById.keys(), ...currentById.keys()])) {
+        if (previousById.get(tabId) !== currentById.get(tabId)) {
+          tabIds.add(tabId)
+        }
+      }
+    }
+  }
+  publishTerminalPaneAuthorityTopologyChange({
+    paneKeys: [...paneKeys],
+    tabIds: [...tabIds],
+    worktreeIds: [...worktreeIds]
+  })
+}
+
 afterEach(() => {
   cancelRecoveryTopologyWait(WORKTREE_ID)
   cancelRecoveryTopologyWait(OTHER_WORKTREE_ID)
@@ -80,7 +134,7 @@ afterEach(() => {
 describe('live agent resume during renderer graph hydration', () => {
   it('waits for graph topology before targeting the original pane', async () => {
     const record = makeRecord(TAB_ID, LEAF_ID)
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -108,7 +162,7 @@ describe('live agent resume during renderer graph hydration', () => {
     expect(takePendingBackgroundTerminalWorktreeMount(WORKTREE_ID)).toBeNull()
     expect(takePendingBackgroundTerminalWorktreeMount(OTHER_WORKTREE_ID)).toBeNull()
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID)],
         [OTHER_WORKTREE_ID]: [makeTerminalTab(OTHER_TAB_ID, OTHER_WORKTREE_ID, 'other-pty')]
@@ -137,7 +191,7 @@ describe('live agent resume during renderer graph hydration', () => {
     const worktreeId = 'folder:folder-1'
     const localPtyId = 'local-pty-1'
     const record = makeRecord(TAB_ID, LEAF_ID, { worktreeId })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: worktreeId,
       activeTabType: 'browser',
       activeTabId: null,
@@ -163,7 +217,7 @@ describe('live agent resume during renderer graph hydration', () => {
 
   it('waits for stable quit recovery topology before creating a replacement', async () => {
     const record = makeRecord(TAB_ID, LEAF_ID, { origin: 'quit' })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -180,7 +234,7 @@ describe('live agent resume during renderer graph hydration', () => {
     expect(createTab).not.toHaveBeenCalled()
     expect(queueStartup).not.toHaveBeenCalled()
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID)]
       },
@@ -199,7 +253,7 @@ describe('live agent resume during renderer graph hydration', () => {
 
   it('mounts hidden preserved panes for in-place worktree-sleep recovery', () => {
     const record = makeRecord(TAB_ID, LEAF_ID, { origin: 'worktree-sleep' })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'terminal',
       activeTabId: SECOND_TAB_ID,
@@ -236,7 +290,7 @@ describe('live agent resume during renderer graph hydration', () => {
       capturedAt: 2,
       updatedAt: 2
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -275,7 +329,7 @@ describe('live agent resume during renderer graph hydration', () => {
       capturedAt: 2,
       updatedAt: 2
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -296,7 +350,7 @@ describe('live agent resume during renderer graph hydration', () => {
     expect(resumeSleepingAgentSessionsForWorktree(WORKTREE_ID)).toBe(0)
     expect(takePendingBackgroundTerminalWorktreeMount(WORKTREE_ID)).toBeNull()
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [
           makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID),
@@ -323,7 +377,7 @@ describe('live agent resume during renderer graph hydration', () => {
       capturedAt: 2,
       updatedAt: 2
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -343,7 +397,7 @@ describe('live agent resume during renderer graph hydration', () => {
     expect(resumeSleepingAgentSessionsForWorktree(WORKTREE_ID)).toBe(0)
     expect(takePendingBackgroundTerminalWorktreeMount(WORKTREE_ID)).toBeNull()
 
-    useAppStore.setState({
+    setAppStoreState({
       sleepingAgentSessionsByPaneKey: { [newer.paneKey]: newer }
     } as never)
     await Promise.resolve()
@@ -360,7 +414,7 @@ describe('live agent resume during renderer graph hydration', () => {
       capturedAt: 2,
       updatedAt: 2
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'terminal',
       activeTabId: SECOND_TAB_ID,
@@ -411,7 +465,7 @@ describe('live agent resume during renderer graph hydration', () => {
     const second = makeRecord(SECOND_TAB_ID, SECOND_LEAF_ID, {
       providerSession: { key: 'session_id', id: 'second-provider-session' }
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -430,7 +484,7 @@ describe('live agent resume during renderer graph hydration', () => {
     expect(resumeSleepingAgentSessionsForWorktree(WORKTREE_ID)).toBe(0)
     expect(dispatchEvent).not.toHaveBeenCalled()
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID)]
       },
@@ -445,11 +499,11 @@ describe('live agent resume during renderer graph hydration', () => {
       tabIds: [TAB_ID]
     })
 
-    useAppStore.setState({ activeTabId: 'unrelated-browser-tab' } as never)
+    setAppStoreState({ activeTabId: 'unrelated-browser-tab' } as never)
     expect(dispatchEvent).toHaveBeenCalledOnce()
     expect(takePendingBackgroundTerminalWorktreeMount(WORKTREE_ID)).toBeNull()
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [
           makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID),
@@ -469,7 +523,7 @@ describe('live agent resume during renderer graph hydration', () => {
       worktreeId: WORKTREE_ID,
       tabIds: [SECOND_TAB_ID]
     })
-    useAppStore.setState({ activeTabId: null } as never)
+    setAppStoreState({ activeTabId: null } as never)
     expect(dispatchEvent).toHaveBeenCalledTimes(2)
     expect(createTab).not.toHaveBeenCalled()
     expect(queueStartup).not.toHaveBeenCalled()
@@ -517,7 +571,7 @@ describe('live agent resume during renderer graph hydration', () => {
         }
       }
     )
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: worktreeIds[0],
       activeTabType: 'browser',
       activeTabId: null,
@@ -541,7 +595,7 @@ describe('live agent resume during renderer graph hydration', () => {
         }
       ]
     }
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: nextTabsByWorktree
     } as never)
     await Promise.resolve()
@@ -556,7 +610,7 @@ describe('live agent resume during renderer graph hydration', () => {
     const unresolved = makeRecord(SECOND_TAB_ID, SECOND_LEAF_ID, {
       providerSession: { key: 'session_id', id: 'unresolved-session' }
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -570,7 +624,7 @@ describe('live agent resume during renderer graph hydration', () => {
     } as never)
     expect(resumeSleepingAgentSessionsForWorktree(WORKTREE_ID)).toBe(0)
 
-    useAppStore.setState({
+    setAppStoreState({
       tabsByWorktree: {
         [WORKTREE_ID]: [makeTerminalTab(TAB_ID, WORKTREE_ID, PTY_ID)]
       },
@@ -580,7 +634,7 @@ describe('live agent resume during renderer graph hydration', () => {
     await Promise.resolve()
     expect(takePendingBackgroundTerminalWorktreeMount(WORKTREE_ID)?.tabIds).toEqual([TAB_ID])
 
-    useAppStore.setState({
+    setAppStoreState({
       sleepingAgentSessionsByPaneKey: { [unresolved.paneKey]: unresolved }
     } as never)
     const replacement = makeRecord(TAB_ID, LEAF_ID, {
@@ -588,7 +642,7 @@ describe('live agent resume during renderer graph hydration', () => {
       capturedAt: 3,
       updatedAt: 3
     })
-    useAppStore.setState({
+    setAppStoreState({
       sleepingAgentSessionsByPaneKey: {
         [replacement.paneKey]: replacement,
         [unresolved.paneKey]: unresolved
@@ -630,7 +684,7 @@ describe('live agent resume during renderer graph hydration', () => {
         return Reflect.ownKeys(target)
       }
     })
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,
@@ -677,7 +731,7 @@ describe('live agent resume during renderer graph hydration', () => {
       tabs.push(makeTerminalTab(tabId, WORKTREE_ID, ptyId))
       rawPtyIdsByTabId[tabId] = []
       rawTerminalLayoutsByTabId[tabId] = makeLayout(leafIds[index]!, ptyId)
-      useAppStore.setState({
+      setAppStoreState({
         tabsByWorktree: { [WORKTREE_ID]: [...tabs] },
         ptyIdsByTabId,
         terminalLayoutsByTabId
@@ -723,7 +777,7 @@ describe('live agent resume during renderer graph hydration', () => {
       terminalLayoutsByTabId[tabId] = makeLayout(leafId, `pty-${index}`)
       sleepingAgentSessionsByPaneKey[record.paneKey] = record
     }
-    useAppStore.setState({
+    setAppStoreState({
       activeWorktreeId: WORKTREE_ID,
       activeTabType: 'browser',
       activeTabId: null,

@@ -1,11 +1,11 @@
 import { useAppStore } from '@/store'
+import {
+  onTerminalPaneAuthorityTopologyChange,
+  type TerminalPaneAuthorityTopologyChange
+} from '@/store/terminal-pane-authority-topology-events'
 import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
-import {
-  collectChangedSleepingAgentPaneKeys,
-  recordWaitsForRecoveryTopology
-} from './sleeping-agent-recovery-topology-state'
-import { createSleepingAgentRecoveryDispatchBarrier } from './sleeping-agent-recovery-dispatch-barrier'
+import { recordWaitsForRecoveryTopology } from './sleeping-agent-recovery-topology-state'
 
 type AppStoreState = ReturnType<typeof useAppStore.getState>
 
@@ -23,12 +23,21 @@ type RecoveryTopologyWait = {
   generation: number
 }
 
+type QueuedTopologyChange = {
+  paneKeys: Set<string>
+  tabIds: Set<string>
+  worktreeIds: Set<string>
+}
+
 const topologyWaitsByWorktree = new Map<string, RecoveryTopologyWait>()
 const registrationsByPaneKey = new Map<string, Set<RecoveryTopologyRegistration>>()
 const registrationsByTabId = new Map<string, Set<RecoveryTopologyRegistration>>()
 let unsubscribeRecoveryTopology: (() => void) | null = null
 let recoveryTopologyDispatching = false
 let recoveryTopologyWaitGeneration = 0
+let queuedTopologyChange: QueuedTopologyChange | null = null
+let queuedTopologyWaitGeneration = 0
+let topologyDispatchQueued = false
 
 function addIndexedRegistration(
   index: Map<string, Set<RecoveryTopologyRegistration>>,
@@ -104,99 +113,59 @@ export function cancelRecoveryTopologyWait(worktreeId: string): void {
   stopTopologySubscriptionIfIdle()
 }
 
-function collectChangedTabIds(state: AppStoreState, previousState: AppStoreState): Set<string> {
-  const changedTabIds = new Set<string>()
-  const ptyIdsChanged = state.ptyIdsByTabId !== previousState.ptyIdsByTabId
-  const layoutsChanged = state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId
-  if (ptyIdsChanged || layoutsChanged) {
-    for (const tabId of registrationsByTabId.keys()) {
-      if (
-        (ptyIdsChanged && state.ptyIdsByTabId[tabId] !== previousState.ptyIdsByTabId[tabId]) ||
-        (layoutsChanged &&
-          state.terminalLayoutsByTabId[tabId] !== previousState.terminalLayoutsByTabId[tabId])
-      ) {
-        changedTabIds.add(tabId)
-      }
-    }
-  }
-  if (state.tabsByWorktree === previousState.tabsByWorktree) {
-    return changedTabIds
-  }
-  for (const wait of topologyWaitsByWorktree.values()) {
-    const worktreeId = wait.worktreeId
-    const previousTabs = previousState.tabsByWorktree[worktreeId] ?? []
-    const currentTabs = state.tabsByWorktree[worktreeId] ?? []
-    if (previousTabs === currentTabs) {
-      continue
-    }
-    const previousById = new Map(previousTabs.map((tab) => [tab.id, tab]))
-    const currentById = new Map(currentTabs.map((tab) => [tab.id, tab]))
-    for (const registration of wait.registrationsByPaneKey.values()) {
-      if (previousById.get(registration.tabId) !== currentById.get(registration.tabId)) {
-        changedTabIds.add(registration.tabId)
-      }
-    }
-  }
-  return changedTabIds
+function addRecordForWait(
+  wait: RecoveryTopologyWait,
+  record: SleepingAgentSessionRecord,
+  recordsByWait: Map<RecoveryTopologyWait, Set<SleepingAgentSessionRecord>>
+): void {
+  const records = recordsByWait.get(wait) ?? new Set()
+  records.add(record)
+  recordsByWait.set(wait, records)
 }
 
-function addResolvedRegistration(
+function reconcileRegistration(
   registration: RecoveryTopologyRegistration,
   state: AppStoreState,
   recordsByWait: Map<RecoveryTopologyWait, Set<SleepingAgentSessionRecord>>,
   maximumWaitGeneration: number
 ): void {
-  if (registration.wait.generation > maximumWaitGeneration) {
+  if (
+    registration.wait.generation > maximumWaitGeneration ||
+    registration.wait.registrationsByPaneKey.get(registration.record.paneKey) !== registration
+  ) {
     return
   }
   if (state.sleepingAgentSessionsByPaneKey[registration.record.paneKey] !== registration.record) {
     removeRegistration(registration)
+    addRecordForWait(registration.wait, registration.record, recordsByWait)
     return
   }
   if (recordWaitsForRecoveryTopology(registration.record, state)) {
     return
   }
   removeRegistration(registration)
-  const records = recordsByWait.get(registration.wait) ?? new Set()
-  records.add(registration.record)
-  recordsByWait.set(registration.wait, records)
+  addRecordForWait(registration.wait, registration.record, recordsByWait)
 }
 
-function reconcileSleepingRecordChanges(
+function reconcilePaneKey(
+  paneKey: string,
   state: AppStoreState,
-  previousState: AppStoreState,
   recordsByWait: Map<RecoveryTopologyWait, Set<SleepingAgentSessionRecord>>,
   maximumWaitGeneration: number
 ): void {
-  const changedPaneKeys = collectChangedSleepingAgentPaneKeys(
-    state.sleepingAgentSessionsByPaneKey,
-    previousState.sleepingAgentSessionsByPaneKey
-  )
-  for (const paneKey of changedPaneKeys) {
-    for (const registration of registrationsByPaneKey.get(paneKey) ?? []) {
-      if (registration.wait.generation > maximumWaitGeneration) {
-        continue
-      }
-      if (state.sleepingAgentSessionsByPaneKey[paneKey] !== registration.record) {
-        const records = recordsByWait.get(registration.wait) ?? new Set()
-        records.add(registration.record)
-        recordsByWait.set(registration.wait, records)
-        removeRegistration(registration)
-      }
-    }
-    const record = state.sleepingAgentSessionsByPaneKey[paneKey]
-    const wait = record ? topologyWaitsByWorktree.get(record.worktreeId) : null
-    if (!record || !wait || wait.generation > maximumWaitGeneration) {
-      continue
-    }
-    if (recordWaitsForRecoveryTopology(record, state)) {
-      addRegistration(wait, record)
-      continue
-    }
-    const records = recordsByWait.get(wait) ?? new Set()
-    records.add(record)
-    recordsByWait.set(wait, records)
+  for (const registration of registrationsByPaneKey.get(paneKey) ?? []) {
+    reconcileRegistration(registration, state, recordsByWait, maximumWaitGeneration)
   }
+  const record = state.sleepingAgentSessionsByPaneKey[paneKey]
+  const wait = record ? topologyWaitsByWorktree.get(record.worktreeId) : null
+  if (!record || !wait || wait.generation > maximumWaitGeneration) {
+    return
+  }
+  if (recordWaitsForRecoveryTopology(record, state)) {
+    addRegistration(wait, record)
+    return
+  }
+  addRecordForWait(wait, record, recordsByWait)
 }
 
 function dispatchResolvedRecords(
@@ -221,9 +190,8 @@ function dispatchResolvedRecords(
   stopTopologySubscriptionIfIdle()
 }
 
-function dispatchRecoveryTopologyChanges(
-  state: AppStoreState,
-  previousState: AppStoreState,
+function dispatchRecoveryTopologyChange(
+  change: QueuedTopologyChange,
   maximumWaitGeneration: number
 ): void {
   if (recoveryTopologyDispatching) {
@@ -231,24 +199,27 @@ function dispatchRecoveryTopologyChanges(
   }
   recoveryTopologyDispatching = true
   try {
+    const state = useAppStore.getState()
     const recordsByWait = new Map<RecoveryTopologyWait, Set<SleepingAgentSessionRecord>>()
-    if (state.sleepingAgentSessionsByPaneKey !== previousState.sleepingAgentSessionsByPaneKey) {
-      reconcileSleepingRecordChanges(state, previousState, recordsByWait, maximumWaitGeneration)
+    for (const paneKey of change.paneKeys) {
+      reconcilePaneKey(paneKey, state, recordsByWait, maximumWaitGeneration)
     }
-    if (
-      state.tabsByWorktree !== previousState.tabsByWorktree ||
-      state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
-      state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId
-    ) {
-      const candidates = new Set<RecoveryTopologyRegistration>()
-      for (const tabId of collectChangedTabIds(state, previousState)) {
-        for (const registration of registrationsByTabId.get(tabId) ?? []) {
+    const candidates = new Set<RecoveryTopologyRegistration>()
+    for (const tabId of change.tabIds) {
+      for (const registration of registrationsByTabId.get(tabId) ?? []) {
+        candidates.add(registration)
+      }
+    }
+    if (change.paneKeys.size === 0 && change.tabIds.size === 0) {
+      for (const worktreeId of change.worktreeIds) {
+        const wait = topologyWaitsByWorktree.get(worktreeId)
+        for (const registration of wait?.registrationsByPaneKey.values() ?? []) {
           candidates.add(registration)
         }
       }
-      for (const registration of candidates) {
-        addResolvedRegistration(registration, state, recordsByWait, maximumWaitGeneration)
-      }
+    }
+    for (const registration of candidates) {
+      reconcileRegistration(registration, state, recordsByWait, maximumWaitGeneration)
     }
     dispatchResolvedRecords(recordsByWait)
   } finally {
@@ -256,25 +227,39 @@ function dispatchRecoveryTopologyChanges(
   }
 }
 
-const queueRecoveryTopologyDispatch = createSleepingAgentRecoveryDispatchBarrier(
-  dispatchRecoveryTopologyChanges
-)
-
-function ensureRecoveryTopologySubscription(): void {
-  if (unsubscribeRecoveryTopology) {
+function queueRecoveryTopologyChange(change: TerminalPaneAuthorityTopologyChange): void {
+  queuedTopologyChange ??= {
+    paneKeys: new Set(),
+    tabIds: new Set(),
+    worktreeIds: new Set()
+  }
+  for (const paneKey of change.paneKeys ?? []) {
+    queuedTopologyChange.paneKeys.add(paneKey)
+  }
+  for (const tabId of change.tabIds ?? []) {
+    queuedTopologyChange.tabIds.add(tabId)
+  }
+  for (const worktreeId of change.worktreeIds ?? []) {
+    queuedTopologyChange.worktreeIds.add(worktreeId)
+  }
+  queuedTopologyWaitGeneration = recoveryTopologyWaitGeneration
+  if (topologyDispatchQueued) {
     return
   }
-  unsubscribeRecoveryTopology = useAppStore.subscribe((state, previousState) => {
-    const sleepingRecordsChanged =
-      state.sleepingAgentSessionsByPaneKey !== previousState.sleepingAgentSessionsByPaneKey
-    const terminalTopologyChanged =
-      state.tabsByWorktree !== previousState.tabsByWorktree ||
-      state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
-      state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId
-    if (sleepingRecordsChanged || terminalTopologyChanged) {
-      queueRecoveryTopologyDispatch(state, previousState, recoveryTopologyWaitGeneration)
+  topologyDispatchQueued = true
+  queueMicrotask(() => {
+    topologyDispatchQueued = false
+    const queued = queuedTopologyChange
+    const waitGeneration = queuedTopologyWaitGeneration
+    queuedTopologyChange = null
+    if (queued) {
+      dispatchRecoveryTopologyChange(queued, waitGeneration)
     }
   })
+}
+
+function ensureRecoveryTopologySubscription(): void {
+  unsubscribeRecoveryTopology ??= onTerminalPaneAuthorityTopologyChange(queueRecoveryTopologyChange)
 }
 
 export function waitForRecoveryTopology(

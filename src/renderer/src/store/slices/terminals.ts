@@ -3413,6 +3413,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     clearCommittedPtyShutdownSettlements(settledPtyIds)
     publishTerminalPaneAuthorityTopologyChange({
       tabIds: tabs.map((tab) => tab.id),
+      paneKeys: Object.keys(sleepingAgentSessionRecords),
       worktreeIds: [worktreeId]
     })
   },

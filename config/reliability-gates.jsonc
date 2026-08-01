@@ -1988,7 +1988,10 @@
         },
         {
           "file": "src/renderer/src/lib/sleeping-agent-recovery-topology.test.ts",
-          "assertions": ["does not let a queued hydration consume a later reconnect wait"]
+          "assertions": [
+            "does not let a queued hydration consume a later reconnect wait",
+            "does not enumerate sleeping records for unrelated paced changes"
+          ]
         },
         {
           "file": "src/renderer/src/store/slices/terminal-authority-hydration-publication.test.ts",
