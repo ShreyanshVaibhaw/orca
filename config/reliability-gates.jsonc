@@ -2004,6 +2004,13 @@
           ]
         },
         {
+          "file": "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+          "assertions": [
+            "publishes only affected runtime worktrees after a changed store commit",
+            "does not publish runtime worktree topology after a no-op store patch"
+          ]
+        },
+        {
           "file": "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
           "assertions": [
             "preserves an origin-live PTY when reattach returns empty",
@@ -5044,6 +5051,7 @@
         {
           "file": "src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts",
           "assertions": [
+            "does not publish topology for no-op target recovery actions",
             "one authority chain permits at most two automatic attempts even when both timeouts exceed the rolling thirty-second window",
             "rejected stale-authority, stale-attempt, or pre-commit success acknowledgements mutate none of the tab, PTY-index, pending, history, or live-binding maps",
             "both split-pane siblings bind under one exact attempt while the first PTY remains the tab fallback",

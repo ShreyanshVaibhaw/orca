@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DirectSshAuthority, SshProviderEpoch } from '../../../../shared/ssh-types'
+import { onTerminalPaneAuthorityTopologyChange } from '../terminal-pane-authority-topology-events'
 import type { DirectSshPaneRetryAttemptId } from './direct-ssh-terminal-recovery'
 import { createTestStore, makeTab, makeWorktree } from './store-test-helpers'
 
@@ -62,9 +63,49 @@ function seedStore(ptyId: string | null = null) {
 }
 
 describe('direct SSH terminal retry ledger', () => {
+  it('does not publish topology for no-op target recovery actions', () => {
+    const store = seedStore()
+    const worktrees = Array.from({ length: 100 }, (_, index) =>
+      makeWorktree({
+        id: `repo-ssh::/work/${index}`,
+        repoId: 'repo-ssh',
+        path: `/work/${index}`,
+        hostId: 'ssh:target'
+      })
+    )
+    store.setState({
+      worktreesByRepo: { 'repo-ssh': worktrees },
+      tabsByWorktree: Object.fromEntries(worktrees.map((worktree) => [worktree.id, []]))
+    })
+    const changes: unknown[] = []
+    let storeCommits = 0
+    const unsubscribeStore = store.subscribe(() => {
+      storeCommits += 1
+    })
+    const unsubscribeTopology = onTerminalPaneAuthorityTopologyChange((change) => {
+      changes.push(change)
+    })
+
+    try {
+      expect(store.getState().clearDirectSshTargetPtyBindings('target')).toBe(0)
+      expect(store.getState().invalidateStaleDirectSshTargetPtyBindings(authority())).toBe(0)
+      expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(0)
+    } finally {
+      unsubscribeStore()
+      unsubscribeTopology()
+    }
+
+    expect(storeCommits).toBe(0)
+    expect(changes).toEqual([])
+  })
+
   it('invalidates a non-null binding without current-authority evidence atomically', () => {
     const ptyId = 'ssh:target@@pty-old'
     const store = seedStore(ptyId)
+    const topologyChanges: unknown[] = []
+    const unsubscribeTopology = onTerminalPaneAuthorityTopologyChange((change) => {
+      topologyChanges.push(change)
+    })
     let publications = 0
     const unsubscribe = store.subscribe(() => {
       publications += 1
@@ -72,8 +113,10 @@ describe('direct SSH terminal retry ledger', () => {
 
     expect(store.getState().invalidateStaleDirectSshTargetPtyBindings(authority())).toBe(1)
     unsubscribe()
+    unsubscribeTopology()
 
     expect(publications).toBe(1)
+    expect(topologyChanges).toEqual([{ tabIds: [TAB_ID] }])
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBeNull()
     expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([])
     expect(store.getState().lastKnownRelayPtyIdByTabId[TAB_ID]).toBe(ptyId)

@@ -199,6 +199,34 @@ function resolveDirectSshTerminalKeys(state: AppState, targetId: string): Set<st
   )
 }
 
+function changedDirectSshTopologyTabIds(
+  state: AppState,
+  patch: { tabsByWorktree?: Record<string, TerminalTab[]> },
+  workspaceKeys: ReadonlySet<string>
+): string[] {
+  const changed = new Set<string>()
+  for (const workspaceKey of workspaceKeys) {
+    const before = state.tabsByWorktree[workspaceKey] ?? []
+    const after = patch.tabsByWorktree?.[workspaceKey] ?? before
+    if (after === before) {
+      continue
+    }
+    const beforeById = new Map(before.map((tab) => [tab.id, tab]))
+    const afterIds = new Set(after.map((tab) => tab.id))
+    for (const tab of after) {
+      if (beforeById.get(tab.id) !== tab) {
+        changed.add(tab.id)
+      }
+    }
+    for (const tab of before) {
+      if (!afterIds.has(tab.id)) {
+        changed.add(tab.id)
+      }
+    }
+  }
+  return [...changed]
+}
+
 function getPendingActivationSpawnCount(value: boolean | number | undefined): number {
   if (value === true) {
     return 1
@@ -2907,52 +2935,61 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
 
   clearDirectSshTargetPtyBindings: (targetId) => {
     let clearedCount = 0
-    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), targetId)]
+    let topologyTabIds: string[] = []
     set((s) => {
-      const result = clearDirectSshTerminalBindings(s, resolveDirectSshTerminalKeys(s, targetId))
+      const workspaceKeys = resolveDirectSshTerminalKeys(s, targetId)
+      const result = clearDirectSshTerminalBindings(s, workspaceKeys)
       clearedCount = result.clearedCount
+      if (result.patch) {
+        topologyTabIds = changedDirectSshTopologyTabIds(s, result.patch, workspaceKeys)
+      }
       return result.patch ?? s
     })
-    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
+    if (topologyTabIds.length > 0) {
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: topologyTabIds })
+    }
     return clearedCount
   },
 
   invalidateStaleDirectSshTargetPtyBindings: (authority) => {
     let clearedCount = 0
-    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), authority.targetId)]
+    let topologyTabIds: string[] = []
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, authority)) {
         return s
       }
-      const result = invalidateStaleDirectSshTerminalBindings(
-        s,
-        resolveDirectSshTerminalKeys(s, authority.targetId),
-        authority
-      )
+      const workspaceKeys = resolveDirectSshTerminalKeys(s, authority.targetId)
+      const result = invalidateStaleDirectSshTerminalBindings(s, workspaceKeys, authority)
       clearedCount = result.clearedCount
+      if (result.patch) {
+        topologyTabIds = changedDirectSshTopologyTabIds(s, result.patch, workspaceKeys)
+      }
       return result.patch ?? s
     })
-    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
+    if (topologyTabIds.length > 0) {
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: topologyTabIds })
+    }
     return clearedCount
   },
 
   retryDirectSshTargetPanes: (authority, now = Date.now()) => {
     let retriedCount = 0
-    const worktreeIds = [...resolveDirectSshTerminalKeys(get(), authority.targetId)]
+    let topologyTabIds: string[] = []
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, authority)) {
         return s
       }
-      const result = retryDirectSshTerminalPanes(
-        s,
-        resolveDirectSshTerminalKeys(s, authority.targetId),
-        authority,
-        now
-      )
+      const workspaceKeys = resolveDirectSshTerminalKeys(s, authority.targetId)
+      const result = retryDirectSshTerminalPanes(s, workspaceKeys, authority, now)
       retriedCount = result.retriedCount
+      if (result.patch) {
+        topologyTabIds = changedDirectSshTopologyTabIds(s, result.patch, workspaceKeys)
+      }
       return result.patch ?? s
     })
-    publishTerminalPaneAuthorityTopologyChange({ worktreeIds })
+    if (topologyTabIds.length > 0) {
+      publishTerminalPaneAuthorityTopologyChange({ tabIds: topologyTabIds })
+    }
     return retriedCount
   },
 

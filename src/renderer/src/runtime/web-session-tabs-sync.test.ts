@@ -109,22 +109,44 @@ function makeSnapshot(
   }
 }
 
-it('publishes only affected runtime worktrees after the store commit', () => {
+it('publishes only affected runtime worktrees after a changed store commit', () => {
   const order: string[] = []
-  vi.mocked(useAppStore.setState).mockImplementationOnce(() => {
+  vi.mocked(useAppStore.setState).mockImplementationOnce((update) => {
     order.push('commit')
+    if (typeof update === 'function') {
+      update(makeState() as never)
+    }
   })
   const unsubscribe = onTerminalPaneAuthorityTopologyChange((change) => {
     order.push(`publish:${(change.worktreeIds ?? []).join(',')}`)
   })
 
   try {
-    applyWebSessionTabsStorePatch((state) => state, ['wt-target'])
+    applyWebSessionTabsStorePatch(() => ({ sortEpoch: 1 }), ['wt-target'])
   } finally {
     unsubscribe()
   }
 
   expect(order).toEqual(['commit', 'publish:wt-target'])
+})
+
+it('does not publish runtime worktree topology after a no-op store patch', () => {
+  const state = makeState()
+  vi.mocked(useAppStore.setState).mockImplementationOnce((update) => {
+    if (typeof update === 'function') {
+      update(state as never)
+    }
+  })
+  const publish = vi.fn()
+  const unsubscribe = onTerminalPaneAuthorityTopologyChange(publish)
+
+  try {
+    applyWebSessionTabsStorePatch((current) => current, ['wt-target'])
+  } finally {
+    unsubscribe()
+  }
+
+  expect(publish).not.toHaveBeenCalled()
 })
 
 describe('applyWebSessionTabsSnapshot', () => {

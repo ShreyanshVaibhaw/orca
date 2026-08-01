@@ -2681,13 +2681,17 @@ export function applyWebSessionTabsStorePatch(
   affectedWorktreeIds: readonly string[]
 ): void {
   let mirroredAgentStatusChanged = false
+  let topologyChanged = false
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
+    topologyChanged = patch !== state
     mirroredAgentStatusChanged =
       patch !== state && Object.prototype.hasOwnProperty.call(patch, 'agentStatusByPaneKey')
     return patch
   })
-  publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
+  if (topologyChanged) {
+    publishTerminalPaneAuthorityTopologyChange({ worktreeIds: affectedWorktreeIds })
+  }
   // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.
   if (mirroredAgentStatusChanged) {
     useAppStore.getState().scheduleAgentStatusFreshness()
