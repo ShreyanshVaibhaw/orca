@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
+import {
+  sendTerminalLiveBoundaryBytes,
+  type TerminalLiveBoundaryByteSender
+} from './terminal-live-boundary-byte-send'
 import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
 import type {
   TerminalLiveInputBoundarySender,
   TerminalLiveInputSender
 } from './terminal-live-input-sender'
-import { isTerminalLiveInputSendAccepted } from './terminal-live-input-sender'
 import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 import {
@@ -102,6 +105,18 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     setLiveInputCapture
   })
 
+  const sendLiveInputBoundaryBytes = useCallback<TerminalLiveBoundaryByteSender>(
+    (handle, bytes, isBoundaryCurrent) =>
+      sendTerminalLiveBoundaryBytes({
+        bytes,
+        handle,
+        isBoundaryCurrent,
+        onDeliveryUnknown,
+        sender: sendLiveTerminalInputRef.current
+      }),
+    [onDeliveryUnknown, sendLiveTerminalInputRef]
+  )
+
   useEffect(() => {
     // Why: unsent kana is safe to retain; sent prefixes and timer-held text are ambiguous after an outage.
     if (!connected) {
@@ -145,7 +160,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       // that differs from the native field text, so the controlled capture must
       // echo the field verbatim; only the PTY mirror sees normalized text.
       setLiveInputCapture(text)
-      applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text))
+      applyLiveInputMirror(activeHandle, normalizeTerminalTextInput(text), text)
     },
     [
       activeHandle,
@@ -180,10 +195,8 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
           return
         case 'send-now':
         case 'commit-held-then-send':
-          void runLiveInputBoundary(activeHandle, async () =>
-            isTerminalLiveInputSendAccepted(
-              await sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
-            )
+          void runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
+            sendLiveInputBoundaryBytes(activeHandle, decision.bytes, isBoundaryCurrent)
           )
           return
         default:
@@ -197,7 +210,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       isLiveInputProducerCurrent,
       liveInputTerminalHandles,
       runLiveInputBoundary,
-      sendLiveTerminalInputRef
+      sendLiveInputBoundaryBytes
     ]
   )
 
@@ -213,7 +226,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     pendingLiveInputHandleRef,
     runLiveInputBoundary,
     sentLiveInputTextRef,
-    sendLiveTerminalInputRef,
+    sendLiveInputBoundaryBytes,
     setLiveInputCapture,
     waitForPendingLiveInputFlush
   })
@@ -226,15 +239,15 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     ) {
       return
     }
-    void runLiveInputBoundary(activeHandle, async () =>
-      isTerminalLiveInputSendAccepted(await sendLiveTerminalInputRef.current(activeHandle, '\r'))
+    void runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
+      sendLiveInputBoundaryBytes(activeHandle, '\r', isBoundaryCurrent)
     )
   }, [
     activeHandle,
     isLiveInputProducerCurrent,
     liveInputTerminalHandles,
     runLiveInputBoundary,
-    sendLiveTerminalInputRef
+    sendLiveInputBoundaryBytes
   ])
 
   return {

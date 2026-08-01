@@ -5,11 +5,8 @@ import {
   getTerminalLiveAccessoryLocalEditText
 } from './terminal-live-text-commit'
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
-import type {
-  TerminalLiveInputBoundarySender,
-  TerminalLiveInputSender
-} from './terminal-live-input-sender'
-import { isTerminalLiveInputSendAccepted } from './terminal-live-input-sender'
+import type { TerminalLiveBoundaryByteSender } from './terminal-live-boundary-byte-send'
+import type { TerminalLiveInputBoundarySender } from './terminal-live-input-sender'
 
 export type TerminalLiveAccessoryInputCommitResult =
   | { readonly kind: 'allow-raw' }
@@ -39,7 +36,7 @@ type TerminalLiveAccessoryInputCommitOptions = {
   readonly pendingLiveInputHandleRef: RefObject<string | null>
   readonly runLiveInputBoundary: TerminalLiveInputBoundarySender
   readonly sentLiveInputTextRef: RefObject<string>
-  readonly sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender>
+  readonly sendLiveInputBoundaryBytes: TerminalLiveBoundaryByteSender
   readonly setLiveInputCapture: (text: string) => void
   readonly waitForPendingLiveInputFlush: () => Promise<boolean>
 }
@@ -56,7 +53,7 @@ export function useTerminalLiveAccessoryInputCommit({
   pendingLiveInputHandleRef,
   runLiveInputBoundary,
   sentLiveInputTextRef,
-  sendLiveTerminalInputRef,
+  sendLiveInputBoundaryBytes,
   setLiveInputCapture,
   waitForPendingLiveInputFlush
 }: TerminalLiveAccessoryInputCommitOptions): TerminalLiveAccessoryInputCommit {
@@ -90,12 +87,12 @@ export function useTerminalLiveAccessoryInputCommit({
       switch (decision.kind) {
         case 'send-now':
         case 'commit-held-then-send':
-          await runLiveInputBoundary(activeHandle, async () =>
-            isInputCurrent()
-              ? isTerminalLiveInputSendAccepted(
-                  await sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
-                )
-              : false
+          await runLiveInputBoundary(activeHandle, (isBoundaryCurrent) =>
+            sendLiveInputBoundaryBytes(
+              activeHandle,
+              decision.bytes,
+              () => isInputCurrent() && isBoundaryCurrent()
+            )
           )
           return { kind: 'handled' }
         case 'local-edit': {
@@ -127,7 +124,7 @@ export function useTerminalLiveAccessoryInputCommit({
       pendingLiveInputHandleRef,
       runLiveInputBoundary,
       sentLiveInputTextRef,
-      sendLiveTerminalInputRef,
+      sendLiveInputBoundaryBytes,
       setLiveInputCapture,
       waitForPendingLiveInputFlush
     ]

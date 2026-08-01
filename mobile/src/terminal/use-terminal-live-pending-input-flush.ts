@@ -5,17 +5,18 @@ import type {
   TerminalLiveInputSender
 } from './terminal-live-input-sender'
 import {
+  createTerminalLiveBoundaryFieldRecoveryState,
+  resetTerminalLiveBoundaryFieldRecovery
+} from './terminal-live-boundary-field-recovery'
+import {
   buildTerminalLiveMirrorPayload,
   computeTerminalLiveMirrorStep,
   TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS
 } from './terminal-live-composition-mirror'
-import {
-  queueTerminalLiveHandleSend,
-  queueTerminalLiveBoundarySend,
-  waitForTerminalLivePendingFlush
-} from './terminal-live-pending-flush-state'
+import { waitForTerminalLivePendingFlush } from './terminal-live-pending-flush-state'
 import { queueTerminalLiveMirrorPayloadSend } from './terminal-live-mirror-payload-send'
 import { useTerminalLiveInputDisconnectReconcile } from './use-terminal-live-input-disconnect-reconcile'
+import { useTerminalLiveInputBoundary } from './use-terminal-live-input-boundary'
 
 const ignoreTerminalLiveInputDeliveryUnknown = (): void => undefined
 
@@ -34,7 +35,7 @@ type TerminalLivePendingInputFlushOptions<TTabType extends string> = {
 }
 
 type TerminalLivePendingInputFlush = {
-  readonly applyLiveInputMirror: (handle: string, fieldText: string) => void
+  readonly applyLiveInputMirror: (handle: string, fieldText: string, captureText?: string) => void
   readonly clearPendingLiveInputCommit: () => void
   readonly currentLiveInputFieldTextRef: RefObject<string>
   readonly heldLiveInputTextRef: RefObject<string>
@@ -70,6 +71,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   const heldLiveInputTextRef = useRef('')
   const sentLiveInputTextRef = useRef('')
   const pendingLiveInputHandleRef = useRef<string | null>(null)
+  const boundaryFieldRecoveryRef = useRef(createTerminalLiveBoundaryFieldRecoveryState())
   const runMirrorStepRef = useRef<
     (handle: string, fieldText: string, commitHeld: boolean) => Promise<boolean>
   >(async () => false)
@@ -83,6 +85,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
 
   const resetMirrorState = useCallback(() => {
     clearHeldCommitTimer()
+    resetTerminalLiveBoundaryFieldRecovery(boundaryFieldRecoveryRef.current)
     heldLiveInputTextRef.current = ''
     sentLiveInputTextRef.current = ''
     currentLiveInputFieldTextRef.current = ''
@@ -148,6 +151,8 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       }
 
       currentLiveInputFieldTextRef.current = fieldText
+      const rejectedFieldEpoch = boundaryFieldRecoveryRef.current.currentFieldEpoch
+      const fieldRecoveryGeneration = boundaryFieldRecoveryRef.current.generation
       const rejectedSentText = sentLiveInputTextRef.current
       const step = computeTerminalLiveMirrorStep(rejectedSentText, fieldText, {
         commitHeld
@@ -180,21 +185,26 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       return queueTerminalLiveMirrorPayloadSend({
         clearPendingLiveInputCommit,
         clearHeldCommitTimer,
+        boundaryFieldRecoveryRef,
         currentLiveInputFieldTextRef,
         currentLiveInputGenerationRef,
         disposedRef,
+        fieldRecoveryGeneration,
         handle,
         heldLiveInputTextRef,
         inputScope: liveInputScope,
         lifecycleEpoch: lifecycleEpochRef.current,
         lifecycleEpochRef,
         liveInputGeneration,
+        liveInputRef,
         onDeliveryUnknown,
         payload,
         pendingLiveInputHandleRef,
         pendingLiveInputFlushRef,
+        rejectedFieldEpoch,
         rejectedSentText,
         sendLiveTerminalInputRef,
+        setLiveInputCapture,
         sentLiveInputTextRef,
         waitForPendingLiveInputFlush
       })
@@ -205,11 +215,13 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       clearHeldCommitTimer,
       inputStateReady,
       liveInputGeneration,
+      liveInputRef,
       liveInputScope,
       liveInputTerminalHandlesRef,
       onDeliveryUnknown,
       resetMirrorState,
       sendLiveTerminalInputRef,
+      setLiveInputCapture,
       waitForPendingLiveInputFlush
     ]
   )
@@ -218,76 +230,35 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   }, [runMirrorStep])
 
   const applyLiveInputMirror = useCallback(
-    (handle: string, fieldText: string): void => {
+    (handle: string, fieldText: string, captureText = fieldText): void => {
+      boundaryFieldRecoveryRef.current.currentCaptureText = captureText
       void runMirrorStep(handle, fieldText, false)
     },
     [runMirrorStep]
   )
 
-  const runLiveInputBoundary = useCallback<TerminalLiveInputBoundarySender>(
-    (expectedHandle, sendBoundary) => {
-      if (
-        !inputStateReady ||
-        disposedRef.current ||
-        liveInputProducerGeneration !== currentLiveInputProducerGenerationRef.current
-      ) {
-        return Promise.resolve(false)
-      }
-      if (expectedHandle !== activeHandleRef.current) {
-        return Promise.resolve(false)
-      }
-      const lifecycleEpoch = lifecycleEpochRef.current
-      const sendCurrentBoundary = (): Promise<boolean> => {
-        const isBoundaryCurrent = (): boolean =>
-          inputStateReady &&
-          !disposedRef.current &&
-          lifecycleEpoch === lifecycleEpochRef.current &&
-          liveInputProducerGeneration === currentLiveInputProducerGenerationRef.current
-        return queueTerminalLiveHandleSend(liveInputScope, expectedHandle, () =>
-          isBoundaryCurrent() ? sendBoundary(isBoundaryCurrent) : Promise.resolve(false)
-        )
-      }
-      const handle = pendingLiveInputHandleRef.current
-      if (!handle) {
-        return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, sendCurrentBoundary)
-      }
-      if (handle !== expectedHandle) {
-        clearPendingLiveInputCommit()
-        return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, sendCurrentBoundary)
-      }
-      if (
-        handle !== activeHandleRef.current ||
-        (activeSessionTabTypeRef.current != null &&
-          activeSessionTabTypeRef.current !== 'terminal') ||
-        !liveInputTerminalHandlesRef.current.has(handle)
-      ) {
-        clearPendingLiveInputCommit()
-        return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, async () => false)
-      }
-
-      const fieldText = currentLiveInputFieldTextRef.current
-      if (heldLiveInputTextRef.current.length > 0 || fieldText !== sentLiveInputTextRef.current) {
-        void runMirrorStep(handle, fieldText, true)
-      }
-      const boundaryPromise = queueTerminalLiveBoundarySend(
-        pendingLiveInputFlushRef,
-        sendCurrentBoundary
-      )
-      // Why: reserve the old field's boundary before a new generation can queue.
-      clearPendingLiveInputCommit()
-      return boundaryPromise
-    },
-    [
-      activeHandleRef,
-      activeSessionTabTypeRef,
-      clearPendingLiveInputCommit,
-      inputStateReady,
-      liveInputTerminalHandlesRef,
-      liveInputProducerGeneration,
-      liveInputScope,
-      runMirrorStep
-    ]
-  )
+  const runLiveInputBoundary = useTerminalLiveInputBoundary({
+    activeHandleRef,
+    activeSessionTabTypeRef,
+    boundaryFieldRecoveryRef,
+    clearHeldCommitTimer,
+    clearPendingLiveInputCommit,
+    currentLiveInputFieldTextRef,
+    currentLiveInputProducerGenerationRef,
+    disposedRef,
+    heldLiveInputTextRef,
+    inputStateReady,
+    lifecycleEpochRef,
+    liveInputProducerGeneration,
+    liveInputRef,
+    liveInputScope,
+    liveInputTerminalHandlesRef,
+    pendingLiveInputFlushRef,
+    pendingLiveInputHandleRef,
+    runMirrorStep,
+    sentLiveInputTextRef,
+    setLiveInputCapture
+  })
 
   useLayoutEffect(() => {
     disposedRef.current = false
@@ -299,6 +270,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         heldCommitTimerRef.current = null
       }
       heldLiveInputTextRef.current = ''
+      resetTerminalLiveBoundaryFieldRecovery(boundaryFieldRecoveryRef.current)
       sentLiveInputTextRef.current = ''
       currentLiveInputFieldTextRef.current = ''
       pendingLiveInputHandleRef.current = null

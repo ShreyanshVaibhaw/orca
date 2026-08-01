@@ -2,7 +2,10 @@ import { createElement, startTransition, Suspense, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import type {
+  TerminalLiveInputSender,
+  TerminalLiveInputSendOutcome
+} from './terminal-live-input-sender'
 import { TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS } from './terminal-live-composition-mirror'
 import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
 
@@ -22,7 +25,20 @@ type TerminalLiveInputCommitHarness = {
 
 type TerminalLiveInputCommitHarnessOptions = {
   readonly liveInputEnabled?: boolean
+  readonly onDeliveryUnknown?: () => void
+  readonly send?: TerminalLiveInputSender
   readonly sendResult?: boolean
+}
+
+function createDeferredOutcome(): {
+  readonly promise: Promise<TerminalLiveInputSendOutcome>
+  readonly resolve: (outcome: TerminalLiveInputSendOutcome) => void
+} {
+  let resolvePromise: (outcome: TerminalLiveInputSendOutcome) => void = () => undefined
+  const promise = new Promise<TerminalLiveInputSendOutcome>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
 }
 
 const NO_LIVE_INPUT_TERMINAL_HANDLES = new Set<string>()
@@ -44,6 +60,8 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 
 function createTerminalLiveInputCommitHarness({
   liveInputEnabled = true,
+  onDeliveryUnknown,
+  send,
   sendResult = true
 }: TerminalLiveInputCommitHarnessOptions = {}): TerminalLiveInputCommitHarness {
   let currentActiveHandle = 'terminal-a'
@@ -63,8 +81,11 @@ function createTerminalLiveInputCommitHarness({
   const sent: string[] = []
   let currentSendResult = sendResult
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
-    current: async (_handle, bytes) => {
+    current: async (handle, bytes) => {
       sent.push(bytes)
+      if (send) {
+        return send(handle, bytes)
+      }
       return currentSendResult ? 'accepted' : 'rejected'
     }
   }
@@ -88,6 +109,7 @@ function createTerminalLiveInputCommitHarness({
       liveInputScope: currentScope,
       liveInputTerminalHandles,
       liveInputTerminalHandlesRef,
+      onDeliveryUnknown,
       sendLiveTerminalInputRef,
       setLiveInputCapture
     })
@@ -269,6 +291,84 @@ describe('terminal live input commit hook', () => {
 
     await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かき', '\r']))
     harness.unmount()
+  })
+
+  it('restores a submitted field when its in-flight kana prefix is rejected', async () => {
+    const firstSend = createDeferredOutcome()
+    const harness = createTerminalLiveInputCommitHarness({
+      send: async (_handle, bytes) => (bytes === 'か' ? firstSend.promise : 'accepted')
+    })
+    harness.handlers.handleLiveInputChange('かき')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か']))
+
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe(''))
+    firstSend.resolve('rejected')
+
+    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('かき'))
+    expect(harness.sent).toEqual(['か'])
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かき', '\r']))
+    harness.unmount()
+  })
+
+  it('merges fields behind multiple queued boundaries after an earlier rejection', async () => {
+    const firstSend = createDeferredOutcome()
+    const harness = createTerminalLiveInputCommitHarness({
+      send: async (_handle, bytes) => (bytes === 'か' ? firstSend.promise : 'accepted')
+    })
+    harness.handlers.handleLiveInputChange('かき')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か']))
+
+    harness.handlers.handleLiveInputSubmit()
+    harness.handlers.handleLiveInputChange('く')
+    harness.handlers.handleLiveInputSubmit()
+    harness.handlers.handleLiveInputChange('け')
+    firstSend.resolve('rejected')
+
+    await vi.waitFor(() => expect(harness.captures.at(-1)).toBe('かきくけ'))
+    expect(harness.sent).toEqual(['か'])
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かきくけ', '\r']))
+    harness.unmount()
+  })
+
+  it('reports an unknown submit once without replaying the carriage return', async () => {
+    const onDeliveryUnknown = vi.fn()
+    const harness = createTerminalLiveInputCommitHarness({
+      onDeliveryUnknown,
+      send: async () => 'unknown'
+    })
+
+    harness.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(onDeliveryUnknown).toHaveBeenCalledOnce())
+    expect(harness.sent).toEqual(['\r'])
+    harness.unmount()
+  })
+
+  it.each([
+    ['generation change', (harness: TerminalLiveInputCommitHarness) => harness.setScope('scope-b')],
+    ['disconnect', (harness: TerminalLiveInputCommitHarness) => harness.setConnected(false)],
+    ['unmount', (harness: TerminalLiveInputCommitHarness) => harness.unmount()]
+  ])('does not report an unknown submit after %s', async (_label, invalidate) => {
+    const outcome = createDeferredOutcome()
+    const onDeliveryUnknown = vi.fn()
+    const harness = createTerminalLiveInputCommitHarness({
+      onDeliveryUnknown,
+      send: async () => outcome.promise
+    })
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['\r']))
+
+    invalidate(harness)
+    outcome.resolve('unknown')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(onDeliveryUnknown).not.toHaveBeenCalled()
+    if (_label !== 'unmount') {
+      harness.unmount()
+    }
   })
 
   it('does not duplicate an accepted kana prefix when a later delta retries', async () => {
