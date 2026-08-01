@@ -41,6 +41,10 @@ import {
   type SshConnectionCallbacks
 } from './ssh-connection-utils'
 import { getPassphrasePrivateKeyPath } from './ssh-private-key-authentication'
+import {
+  requiresSystemSshForSecurityKey,
+  shouldUseSystemSshTransport
+} from './ssh-transport-selection'
 import type { RemoteHostPlatform } from './ssh-remote-platform'
 import {
   resolveSftpTransferPathIfMapped,
@@ -440,11 +444,14 @@ export class SshConnection {
             const targetDir = await resolveSftpTransferPathIfMapped(sftp, remoteDir, options)
             linkedSignal.signal.throwIfAborted()
             const { uploadDirectory } = await import('./ssh-relay-deploy-helpers')
-            await uploadDirectory(sftp, localDir, targetDir)
+            await uploadDirectory(sftp, localDir, targetDir, localDir, {
+              signal: linkedSignal.signal
+            })
           })()
           await raceSftpFileTransferWithAbort(transfer, linkedSignal.signal, (onClose) => {
             sftp.once('close', onClose)
             endSftp()
+            return () => sftp.removeListener('close', onClose)
           })
         } finally {
           endSftp()
@@ -543,6 +550,7 @@ export class SshConnection {
           await raceSftpFileTransferWithAbort(write, linkedSignal.signal, (onClose) => {
             sftp.once('close', onClose)
             endSftp()
+            return () => sftp.removeListener('close', onClose)
           })
         } finally {
           endSftp()
@@ -632,7 +640,14 @@ export class SshConnection {
     const resolved = await resolveWithSshG(this.target.configHost || this.target.label).catch(
       () => null
     )
-    if (shouldUseSystemSshTransport(this.target, resolved)) {
+    const usesConfiguredSystemTransport = shouldUseSystemSshTransport(this.target, resolved)
+    const requiresSecurityKeyTransport = usesConfiguredSystemTransport
+      ? false
+      : await requiresSystemSshForSecurityKey(this.target, resolved)
+    if (!this.isCurrentConnectAttempt(connectGeneration)) {
+      throw this.createCancelledConnectAttemptError()
+    }
+    if (usesConfiguredSystemTransport || requiresSecurityKeyTransport) {
       await this.doSystemSshProbeWithControlMasterRetry(connectGeneration, resolved)
       return
     }
@@ -1382,24 +1397,4 @@ export class SshConnection {
   }
 }
 
-export function shouldUseSystemSshTransport(
-  target: SshTarget,
-  resolved: Pick<SshResolvedConfig, 'proxyUseFdpass' | 'proxyCommand' | 'proxyJump'> | null
-): boolean {
-  if (isOpenSshConfigBackedTarget(target) && resolved) {
-    return (
-      process.env.ORCA_SSH_FORCE_SYSTEM_TRANSPORT === '1' ||
-      resolved.proxyUseFdpass === true ||
-      resolved.proxyCommand != null ||
-      resolved.proxyJump != null
-    )
-  }
-  return (
-    process.env.ORCA_SSH_FORCE_SYSTEM_TRANSPORT === '1' ||
-    target.proxyCommand != null ||
-    target.jumpHost != null ||
-    resolved?.proxyUseFdpass === true ||
-    resolved?.proxyCommand != null ||
-    resolved?.proxyJump != null
-  )
-}
+export { shouldUseSystemSshTransport } from './ssh-transport-selection'
