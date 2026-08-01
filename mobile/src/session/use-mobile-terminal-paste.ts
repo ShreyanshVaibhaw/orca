@@ -119,37 +119,36 @@ export function useMobileTerminalPaste({
     }
     const targetHandle = activeHandle
     try {
-      const text = await Clipboard.getStringAsync()
-      let payload: string | null = null
-      if (text.length > 0) {
-        payload = buildMobileTerminalClipboardTextPayload(
-          text,
-          ptyModesRef.current.get(targetHandle)
-        )
-      } else {
-        const image = await Clipboard.getImageAsync({ format: 'png' })
-        if (!image) {
-          refreshCanPaste()
-          return
-        }
-        const connectionId = await getActiveWorktreeConnectionId()
-        const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
-        const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
-          connectionId
-        })
-        payload = buildMobileImagePastePayload(imagePath)
-      }
-
-      const wrappedBytes = new TextEncoder().encode(payload).byteLength
-      if (wrappedBytes > 256 * 1024) {
-        onError()
-        // eslint-disable-next-line no-console
-        console.warn('[mobile-clip] paste oversized', { wrappedBytes })
-        showToast('Paste too large (max 256 KiB)', 1500)
-        return
-      }
-      // Why: paste lives in the accessory row and must not overtake pending IME text.
+      // Why: reserve the tap before clipboard/image preparation so a later Return cannot overtake it.
       const sent = await sendLiveInputExternalBoundary(targetHandle, async () => {
+        const text = await Clipboard.getStringAsync()
+        let payload: string
+        if (text.length > 0) {
+          payload = buildMobileTerminalClipboardTextPayload(
+            text,
+            ptyModesRef.current.get(targetHandle)
+          )
+        } else {
+          const image = await Clipboard.getImageAsync({ format: 'png' })
+          if (!image) {
+            refreshCanPaste()
+            return false
+          }
+          const connectionId = await getActiveWorktreeConnectionId()
+          const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
+          const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
+            connectionId
+          })
+          payload = buildMobileImagePastePayload(imagePath)
+        }
+
+        const wrappedBytes = new TextEncoder().encode(payload).byteLength
+        if (wrappedBytes > 256 * 1024) {
+          onError()
+          console.warn('[mobile-clip] paste oversized', { wrappedBytes })
+          showToast('Paste too large (max 256 KiB)', 1500)
+          return false
+        }
         const currentClient = clientRef.current
         if (
           !currentClient ||

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, type RefObject } from 'react'
 import type { TextInput } from 'react-native'
 import { getTerminalLiveSpecialKeyDecision } from './terminal-live-text-commit'
-import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import type {
   TerminalLiveInputBoundarySender,
   TerminalLiveInputSender
@@ -10,7 +9,7 @@ import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 import {
   useTerminalLiveAccessoryInputCommit,
-  type TerminalLiveAccessoryInputCommitResult
+  type TerminalLiveAccessoryInputCommit
 } from './use-terminal-live-accessory-input-commit'
 
 type TerminalLiveInputKeyPressEvent = {
@@ -36,9 +35,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
 
 type TerminalLiveInputCommitHandlers = {
   readonly clearPendingLiveInputCommit: () => void
-  readonly handleLiveInputAccessoryBytes: (
-    input: TerminalLiveAccessoryInput
-  ) => Promise<TerminalLiveAccessoryInputCommitResult>
+  readonly handleLiveInputAccessoryBytes: TerminalLiveAccessoryInputCommit
   readonly handleLiveInputChange: (text: string) => void
   readonly handleLiveInputKeyPress: (event: TerminalLiveInputKeyPressEvent) => void
   readonly handleLiveInputSubmit: () => void

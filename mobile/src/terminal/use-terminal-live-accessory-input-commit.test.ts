@@ -2,12 +2,11 @@ import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { describe, expect, it, vi } from 'vitest'
-import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
 import {
   getTerminalLiveAccessoryInactiveInputCommitResult,
   useTerminalLiveAccessoryInputCommit,
-  type TerminalLiveAccessoryInputCommitResult
+  type TerminalLiveAccessoryInputCommit
 } from './use-terminal-live-accessory-input-commit'
 
 type DeferredBoolean = {
@@ -20,6 +19,14 @@ function createDeferredBoolean(): DeferredBoolean {
     throw new Error('deferred promise was resolved before initialization')
   }
   const promise = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
+
+function createDeferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolvePromise = (): void => undefined
+  const promise = new Promise<void>((resolve) => {
     resolvePromise = resolve
   })
   return { promise, resolve: resolvePromise }
@@ -38,6 +45,7 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 }
 
 type AccessoryInputCommitHarnessOptions = {
+  readonly boundaryGate?: Promise<void>
   readonly heldText?: string
   readonly sentText?: string
   readonly pendingHandle?: string | null
@@ -50,9 +58,7 @@ type AccessoryInputCommitHarnessOptions = {
 }
 
 type AccessoryInputCommitHarness = {
-  readonly commit: (
-    input: TerminalLiveAccessoryInput
-  ) => Promise<TerminalLiveAccessoryInputCommitResult>
+  readonly commit: TerminalLiveAccessoryInputCommit
   readonly sent: readonly string[]
   readonly applyLiveInputMirror: ReturnType<typeof vi.fn>
   readonly runLiveInputBoundary: ReturnType<typeof vi.fn>
@@ -61,6 +67,7 @@ type AccessoryInputCommitHarness = {
 }
 
 function createAccessoryInputCommitHarness({
+  boundaryGate,
   heldText = '',
   sentText = '',
   pendingHandle = null,
@@ -87,8 +94,10 @@ function createAccessoryInputCommitHarness({
   const applyLiveInputMirror = vi.fn((_handle: string, _fieldText: string) => {})
   const clearPendingLiveInputCommit = vi.fn(() => {})
   const runLiveInputBoundary = vi.fn(
-    async (_expectedHandle: string, sendBoundary: () => Promise<boolean>) =>
-      flushResult ? sendBoundary() : false
+    async (_expectedHandle: string, sendBoundary: () => Promise<boolean>) => {
+      await boundaryGate
+      return flushResult ? sendBoundary() : false
+    }
   )
   const waitForPendingLiveInputFlush = vi.fn(
     waitForPendingFlush ?? (async (): Promise<boolean> => waitResult)
@@ -240,6 +249,20 @@ describe('terminal live accessory input commit hook', () => {
     expect(result).toEqual({ kind: 'handled' })
     expect(harness.runLiveInputBoundary).toHaveBeenCalledWith('terminal-a', expect.any(Function))
     expect(harness.sent).toEqual(['\x1b'])
+  })
+
+  it('drops a released repeat before its reserved boundary dispatches', async () => {
+    const boundaryGate = createDeferredVoid()
+    let repeatCurrent = true
+    const harness = createAccessoryInputCommitHarness({ boundaryGate: boundaryGate.promise })
+
+    const commit = harness.commit({ bytes: '\x1b' }, () => repeatCurrent)
+    repeatCurrent = false
+    boundaryGate.resolve()
+
+    await expect(commit).resolves.toEqual({ kind: 'handled' })
+    expect(harness.sent).toEqual([])
+    harness.unmount()
   })
 
   it('Given accessory backspace with a held syllable When committed Then mirrors the emptied field without terminal bytes', async () => {

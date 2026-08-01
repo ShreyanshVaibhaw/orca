@@ -15,6 +15,11 @@ export type TerminalLiveAccessoryInputCommitResult =
   | { readonly kind: 'handled' }
   | { readonly kind: 'suppress-raw' }
 
+export type TerminalLiveAccessoryInputCommit = (
+  input: TerminalLiveAccessoryInput,
+  isInputCurrent?: () => boolean
+) => Promise<TerminalLiveAccessoryInputCommitResult>
+
 export async function getTerminalLiveAccessoryInactiveInputCommitResult(
   waitForPendingLiveInputFlush: () => Promise<boolean>
 ): Promise<TerminalLiveAccessoryInputCommitResult> {
@@ -51,12 +56,13 @@ export function useTerminalLiveAccessoryInputCommit({
   sendLiveTerminalInputRef,
   setLiveInputCapture,
   waitForPendingLiveInputFlush
-}: TerminalLiveAccessoryInputCommitOptions): (
-  input: TerminalLiveAccessoryInput
-) => Promise<TerminalLiveAccessoryInputCommitResult> {
+}: TerminalLiveAccessoryInputCommitOptions): TerminalLiveAccessoryInputCommit {
   return useCallback(
-    async (input: TerminalLiveAccessoryInput): Promise<TerminalLiveAccessoryInputCommitResult> => {
-      if (!isLiveInputProducerCurrent()) {
+    async (
+      input: TerminalLiveAccessoryInput,
+      isInputCurrent = () => true
+    ): Promise<TerminalLiveAccessoryInputCommitResult> => {
+      if (!isLiveInputProducerCurrent() || !isInputCurrent()) {
         return { kind: 'suppress-raw' }
       }
       if (!activeHandle) {
@@ -66,7 +72,9 @@ export function useTerminalLiveAccessoryInputCommit({
         const inactiveResult = await getTerminalLiveAccessoryInactiveInputCommitResult(
           waitForPendingLiveInputFlush
         )
-        return isLiveInputProducerCurrent() ? inactiveResult : { kind: 'suppress-raw' }
+        return isLiveInputProducerCurrent() && isInputCurrent()
+          ? inactiveResult
+          : { kind: 'suppress-raw' }
       }
       const ownsPendingState = pendingLiveInputHandleRef.current === activeHandle
       if (pendingLiveInputHandleRef.current && !ownsPendingState) {
@@ -79,7 +87,9 @@ export function useTerminalLiveAccessoryInputCommit({
         case 'send-now':
         case 'commit-held-then-send':
           await runLiveInputBoundary(activeHandle, () =>
-            sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
+            isInputCurrent()
+              ? sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
+              : Promise.resolve(false)
           )
           return { kind: 'handled' }
         case 'local-edit': {

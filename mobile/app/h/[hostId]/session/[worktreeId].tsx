@@ -136,6 +136,7 @@ import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-termina
 import { useTerminalInputCommittedSnapshot } from '../../../../src/terminal/use-terminal-input-committed-snapshot'
 import { useTerminalBufferedInputSend } from '../../../../src/terminal/use-terminal-buffered-input-send'
 import { useTerminalAccessoryRepeat } from '../../../../src/terminal/use-terminal-accessory-repeat'
+import { useTerminalGestureInputQueue } from '../../../../src/terminal/use-terminal-gesture-input-queue'
 import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import { buildTerminalSendParams } from '../../../../src/terminal/terminal-send-request'
 import {
@@ -255,9 +256,6 @@ import {
   isTerminalPhoneDisplayMode,
   MOBILE_SESSION_STATUS_LABELS,
   TERMINAL_GESTURE_INPUT_BUCKET_CAPACITY,
-  TERMINAL_GESTURE_INPUT_FLUSH_DELAY_MS,
-  TERMINAL_GESTURE_INPUT_MAX_PENDING_SEQUENCES,
-  TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS,
   TERMINAL_GESTURE_INPUT_REFILL_PER_SECOND,
   updateTerminalCwdFromStreamEvent
 } from '../../../../src/session/mobile-session-route-helpers'
@@ -289,8 +287,7 @@ import type {
   SessionTabsResult,
   Terminal,
   TerminalCreateResult,
-  TerminalGestureInputBucket,
-  TerminalGestureInputQueue
+  TerminalGestureInputBucket
 } from './mobile-session-route-types'
 
 const TERMINAL_KEYBOARD_DISMISS_ACTION_SHEET_FALLBACK_MS = 450
@@ -1003,8 +1000,6 @@ export default function SessionScreen() {
   // Why: WebView pushes terminal modes on every change so paste reads a synchronous snapshot — no round-trip.
   const ptyModesRef = useRef<Map<string, TerminalModes>>(new Map())
   const terminalGestureInputBucketsRef = useRef<Map<string, TerminalGestureInputBucket>>(new Map())
-  const terminalGestureInputQueuesRef = useRef<Map<string, TerminalGestureInputQueue>>(new Map())
-  const terminalGestureInputInFlightRef = useRef<Map<string, symbol>>(new Map())
   const terminalCwdRef = useRef<Map<string, string>>(new Map())
   const initialModesSeenRef = useRef<Set<string>>(new Set())
   const deviceTokenRef = useRef<string | null>(null)
@@ -1086,8 +1081,20 @@ export default function SessionScreen() {
     setLiveInputCapture
   })
   const runTerminalBufferedInputSend = useTerminalBufferedInputSend(liveInputProducerGeneration)
-  const { startAccessoryRepeat, stopAccessoryRepeat } =
-    useTerminalAccessoryRepeat(handleAccessoryKey)
+  const { startAccessoryRepeat, stopAccessoryRepeat } = useTerminalAccessoryRepeat(
+    handleAccessoryKey,
+    liveInputProducerGeneration
+  )
+  const { clearTerminalGestureInputHandle, enqueueTerminalGestureInput } =
+    useTerminalGestureInputQueue({
+      activeHandleRef,
+      activeSessionTabTypeRef,
+      clientRef,
+      connStateRef,
+      deviceTokenRef,
+      liveInputProducerGeneration,
+      sendLiveInputExternalBoundary
+    })
   const { canCompose, canSend } = resolveMobileTerminalInputGate({
     connState,
     activeHandle: terminalInputStateReady ? activeHandle : null,
@@ -2381,19 +2388,6 @@ export default function SessionScreen() {
       ...sessionTabsFetchReporting
     })
 
-  useEffect(() => {
-    if (connState === 'connected') {
-      return
-    }
-    for (const queued of terminalGestureInputQueuesRef.current.values()) {
-      if (queued.timer) {
-        clearTimeout(queued.timer)
-      }
-    }
-    terminalGestureInputQueuesRef.current.clear()
-    terminalGestureInputInFlightRef.current.clear()
-  }, [connState])
-
   const hostQueryReplyInputSupportedRef = useRef(false)
 
   useEffect(() => {
@@ -2644,13 +2638,6 @@ export default function SessionScreen() {
     terminalDiagnosticsRef.current.resetRoute()
     appliedSnapshotMarkerRef.current = { epoch: null, version: -1 }
     closedTabTombstonesRef.current.clear()
-    for (const queued of terminalGestureInputQueuesRef.current.values()) {
-      if (queued.timer) {
-        clearTimeout(queued.timer)
-      }
-    }
-    terminalGestureInputQueuesRef.current.clear()
-    terminalGestureInputInFlightRef.current.clear()
     setActiveHandle(null)
     setTerminals([])
     terminalsRef.current = []
@@ -2930,21 +2917,19 @@ export default function SessionScreen() {
   switchSessionTabRef.current = switchSessionTab
 
   // Why: only store the ref; subscribe on web-ready to avoid the blank-terminal race (init queued before xterm.js loaded).
-  const setTerminalWebViewRef = useCallback((handle: string, ref: TerminalWebViewHandle | null) => {
-    terminalDiagnosticsRef.current.webViewRef(handle, ref != null)
-    if (ref) {
-      terminalRefs.current.set(handle, ref)
-    } else {
-      terminalRefs.current.delete(handle)
-      terminalGestureInputBucketsRef.current.delete(handle)
-      const queued = terminalGestureInputQueuesRef.current.get(handle)
-      if (queued?.timer) {
-        clearTimeout(queued.timer)
+  const setTerminalWebViewRef = useCallback(
+    (handle: string, ref: TerminalWebViewHandle | null) => {
+      terminalDiagnosticsRef.current.webViewRef(handle, ref != null)
+      if (ref) {
+        terminalRefs.current.set(handle, ref)
+      } else {
+        terminalRefs.current.delete(handle)
+        terminalGestureInputBucketsRef.current.delete(handle)
+        clearTerminalGestureInputHandle(handle)
       }
-      terminalGestureInputQueuesRef.current.delete(handle)
-      terminalGestureInputInFlightRef.current.delete(handle)
-    }
-  }, [])
+    },
+    [clearTerminalGestureInputHandle]
+  )
 
   const handleTerminalWebReady = useCallback(
     (handle: string) => {
@@ -3028,25 +3013,30 @@ export default function SessionScreen() {
     )
   }
 
-  async function handleAccessoryKey(input: ReturnType<typeof createTerminalLiveAccessoryInput>) {
-    if (!client || !activeHandle || !canSend) {
+  async function handleAccessoryKey(
+    input: ReturnType<typeof createTerminalLiveAccessoryInput>,
+    isInputCurrent: () => boolean = () => true
+  ) {
+    if (!client || !activeHandle || !canSend || !isInputCurrent()) {
       return
     }
     const targetHandle = activeHandle
-    const accessoryCommit = await handleLiveInputAccessoryBytes(input)
-    if (accessoryCommit.kind !== 'allow-raw') {
+    const accessoryCommit = await handleLiveInputAccessoryBytes(input, isInputCurrent)
+    if (accessoryCommit.kind !== 'allow-raw' || !isInputCurrent()) {
       return
     }
     await sendLiveInputExternalBoundary(targetHandle, () =>
-      sendTerminalLiveAccessoryRawBytes({
-        client: clientRef.current,
-        targetHandle,
-        activeHandle: activeHandleRef.current,
-        activeSessionTabType: activeSessionTabTypeRef.current,
-        connState: connStateRef.current,
-        bytes: input.bytes,
-        deviceToken: deviceTokenRef.current
-      })
+      isInputCurrent()
+        ? sendTerminalLiveAccessoryRawBytes({
+            client: clientRef.current,
+            targetHandle,
+            activeHandle: activeHandleRef.current,
+            activeSessionTabType: activeSessionTabTypeRef.current,
+            connState: connStateRef.current,
+            bytes: input.bytes,
+            deviceToken: deviceTokenRef.current
+          })
+        : Promise.resolve(false)
     )
   }
 
@@ -3309,112 +3299,6 @@ export default function SessionScreen() {
       return true
     },
     []
-  )
-
-  const flushTerminalGestureInput = useCallback(
-    async (handle: string) => {
-      const queued = terminalGestureInputQueuesRef.current.get(handle)
-      if (!queued) {
-        return
-      }
-      if (queued.timer) {
-        clearTimeout(queued.timer)
-        queued.timer = null
-      }
-      if (terminalGestureInputInFlightRef.current.has(handle)) {
-        return
-      }
-
-      terminalGestureInputQueuesRef.current.delete(handle)
-      const isActive =
-        handle === activeHandleRef.current && activeSessionTabTypeRef.current === 'terminal'
-      const isFresh = Date.now() - queued.lastUpdatedMs <= TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS
-      if (!clientRef.current || connStateRef.current !== 'connected' || !isActive || !isFresh) {
-        return
-      }
-
-      const flushGeneration = Symbol('terminal-gesture-input-flush')
-      terminalGestureInputInFlightRef.current.set(handle, flushGeneration)
-      try {
-        await sendLiveInputExternalBoundary(handle, () =>
-          sendMobileTerminalLiveInput({
-            client: clientRef.current,
-            connState: connStateRef.current,
-            targetHandle: handle,
-            activeHandle: activeHandleRef.current,
-            activeSessionTabType: activeSessionTabTypeRef.current,
-            text: queued.bytes,
-            deviceToken: deviceTokenRef.current
-          })
-        )
-      } catch {
-        // Transient failure
-      } finally {
-        if (terminalGestureInputInFlightRef.current.get(handle) === flushGeneration) {
-          terminalGestureInputInFlightRef.current.delete(handle)
-          const next = terminalGestureInputQueuesRef.current.get(handle)
-          if (next) {
-            if (Date.now() - next.lastUpdatedMs > TERMINAL_GESTURE_INPUT_MAX_QUEUE_AGE_MS) {
-              if (next.timer) {
-                clearTimeout(next.timer)
-              }
-              terminalGestureInputQueuesRef.current.delete(handle)
-            } else {
-              void flushTerminalGestureInput(handle)
-            }
-          }
-        }
-      }
-    },
-    [sendLiveInputExternalBoundary]
-  )
-
-  const enqueueTerminalGestureInput = useCallback(
-    (handle: string, bytes: string, sequenceCount: number) => {
-      const now = Date.now()
-      const current = terminalGestureInputQueuesRef.current.get(handle)
-      if (
-        current &&
-        current.sequenceCount + sequenceCount <= TERMINAL_GESTURE_INPUT_MAX_PENDING_SEQUENCES
-      ) {
-        current.bytes += bytes
-        current.sequenceCount += sequenceCount
-        current.lastUpdatedMs = now
-        return
-      }
-
-      if (current) {
-        if (current.timer) {
-          clearTimeout(current.timer)
-        }
-        if (!terminalGestureInputInFlightRef.current.has(handle)) {
-          void flushTerminalGestureInput(handle)
-        } else {
-          // Why: cap is a soft guideline — append instead of dropping queued bytes; the in-flight flush picks up the merged queue.
-          current.bytes += bytes
-          current.sequenceCount += sequenceCount
-          current.lastUpdatedMs = now
-          current.timer = setTimeout(() => {
-            current.timer = null
-            void flushTerminalGestureInput(handle)
-          }, TERMINAL_GESTURE_INPUT_FLUSH_DELAY_MS)
-          return
-        }
-      }
-
-      const queued: TerminalGestureInputQueue = {
-        bytes,
-        sequenceCount,
-        timer: null,
-        lastUpdatedMs: now
-      }
-      queued.timer = setTimeout(() => {
-        queued.timer = null
-        void flushTerminalGestureInput(handle)
-      }, TERMINAL_GESTURE_INPUT_FLUSH_DELAY_MS)
-      terminalGestureInputQueuesRef.current.set(handle, queued)
-    },
-    [flushTerminalGestureInput]
   )
 
   const handleTerminalInput = useCallback(

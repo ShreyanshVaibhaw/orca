@@ -8,13 +8,21 @@ type TerminalBufferedInputSend = (
 ) => Promise<boolean>
 
 export function useTerminalBufferedInputSend(inputGeneration: symbol): TerminalBufferedInputSend {
-  const committedInputGenerationRef = useRef(inputGeneration)
+  const committedInputGenerationRef = useRef<symbol | null>(null)
   const sendingInputGenerationRef = useRef<symbol | null>(null)
 
   useLayoutEffect(() => {
     committedInputGenerationRef.current = inputGeneration
     if (sendingInputGenerationRef.current !== inputGeneration) {
       sendingInputGenerationRef.current = null
+    }
+    return () => {
+      if (committedInputGenerationRef.current === inputGeneration) {
+        committedInputGenerationRef.current = null
+      }
+      if (sendingInputGenerationRef.current === inputGeneration) {
+        sendingInputGenerationRef.current = null
+      }
     }
   }, [inputGeneration])
 

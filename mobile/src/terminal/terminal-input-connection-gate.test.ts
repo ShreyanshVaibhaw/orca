@@ -7,6 +7,10 @@ const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
   'utf8'
 )
+const gestureInputQueueSource = readFileSync(
+  new URL('./use-terminal-gesture-input-queue.ts', import.meta.url),
+  'utf8'
+)
 
 function routeSlice(anchorStart: string, anchorEnd: string): string {
   const start = sessionRouteSource.indexOf(anchorStart)
@@ -160,12 +164,13 @@ describe('session route offline-compose wiring', () => {
     expect(rawAccessorySend).toContain('sendLiveInputExternalBoundary(targetHandle')
     expect(rawAccessorySend).toContain('sendTerminalLiveAccessoryRawBytes({')
 
-    const gestureSend = routeSlice(
-      'const flushTerminalGestureInput = useCallback',
-      'const enqueueTerminalGestureInput = useCallback'
+    const gestureQueueHook = routeSlice(
+      'useTerminalGestureInputQueue({',
+      'sendLiveInputExternalBoundary\n    })'
     )
-    expect(gestureSend).toContain('sendLiveInputExternalBoundary(handle')
-    expect(gestureSend).toContain('sendMobileTerminalLiveInput({')
+    expect(gestureQueueHook).toContain('liveInputProducerGeneration')
+    expect(gestureInputQueueSource).toContain('sendLiveInputExternalBoundary(handle')
+    expect(gestureInputQueueSource).toContain('sendMobileTerminalLiveInput({')
     expect(TERMINAL_INPUT_SEND_OPTIONS).toEqual({ failWhenDisconnected: true })
   })
 

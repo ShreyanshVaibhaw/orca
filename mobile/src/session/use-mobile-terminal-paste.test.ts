@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import * as Clipboard from 'expo-clipboard'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
+import type { TerminalLiveInputBoundarySender } from '../terminal/terminal-live-input-sender'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { useMobileTerminalPaste } from './use-mobile-terminal-paste'
@@ -32,7 +33,10 @@ function createDeferredText(): DeferredText {
   return { promise, resolve: resolvePromise }
 }
 
-function renderPaste(inputScopeRef: RefObject<string>) {
+function renderPaste(
+  inputScopeRef: RefObject<string>,
+  sendLiveInputExternalBoundary: TerminalLiveInputBoundarySender = (_handle, send) => send()
+) {
   const sendRequest = vi.fn(async () => ({
     id: '1',
     ok: true,
@@ -57,7 +61,7 @@ function renderPaste(inputScopeRef: RefObject<string>) {
       deviceTokenRef: { current: 'device-1' },
       inputScope: 'host-a\0worktree-a',
       inputScopeRef,
-      sendLiveInputExternalBoundary: (_handle, send) => send(),
+      sendLiveInputExternalBoundary,
       getActiveWorktreeConnectionId: async () => null,
       onError: vi.fn(),
       onSuccess,
@@ -125,6 +129,42 @@ it('drops clipboard text when the route scope changes during the read', async ()
   await result
 
   expect(sendRequest).not.toHaveBeenCalled()
+  act(() => renderer.unmount())
+})
+
+it('reserves paste ordering before a deferred clipboard read', async () => {
+  const deferredText = createDeferredText()
+  vi.mocked(Clipboard.getStringAsync).mockReturnValue(deferredText.promise)
+  const events: string[] = []
+  let tail = Promise.resolve(true)
+  const orderedBoundary: TerminalLiveInputBoundarySender = (_handle, send) => {
+    const result = tail.then(send)
+    tail = result.catch(() => false)
+    return result
+  }
+  const inputScopeRef = { current: 'host-a\0worktree-a' }
+  const { paste, renderer, sendRequest } = renderPaste(inputScopeRef, orderedBoundary)
+  sendRequest.mockImplementationOnce(async () => {
+    events.push('paste')
+    return { id: '1', ok: true, result: { send: { accepted: true } } }
+  })
+
+  const pasteResult = paste()
+  await vi.waitFor(() => expect(Clipboard.getStringAsync).toHaveBeenCalled())
+  const laterReturn = orderedBoundary('terminal-a', async () => {
+    events.push('return')
+    return true
+  })
+  await Promise.resolve()
+  expect(events).toEqual([])
+
+  await act(async () => {
+    deferredText.resolve('echo paste')
+    await pasteResult
+  })
+  await laterReturn
+
+  expect(events).toEqual(['paste', 'return'])
   act(() => renderer.unmount())
 })
 

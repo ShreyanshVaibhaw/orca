@@ -120,4 +120,22 @@ describe('terminal buffered input send', () => {
     expect(onUnknown).toHaveBeenCalledTimes(2)
     harness.unmount()
   })
+
+  it.each(['rejected', 'unknown'] as const)(
+    'does not publish a deferred %s outcome after unmount',
+    async (outcome) => {
+      const harness = createBufferedSendHarness()
+      const deferred = createDeferredOutcome()
+      const onRejected = vi.fn()
+      const onUnknown = vi.fn()
+      const send = harness.runSend(() => deferred.promise, onRejected, onUnknown)
+
+      harness.unmount()
+      deferred.resolve(outcome)
+
+      await expect(send).resolves.toBe(true)
+      expect(onRejected).not.toHaveBeenCalled()
+      expect(onUnknown).not.toHaveBeenCalled()
+    }
+  )
 })
