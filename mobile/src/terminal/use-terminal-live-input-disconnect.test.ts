@@ -20,7 +20,7 @@ it('preserves fully unsent kana across a disconnect', async () => {
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return true
+      return 'accepted'
     }
   }
   let connected = true

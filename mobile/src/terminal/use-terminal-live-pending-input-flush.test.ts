@@ -2,7 +2,11 @@ import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { expect, it, vi } from 'vitest'
-import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import {
+  isTerminalLiveInputSendAccepted,
+  type TerminalLiveInputSender,
+  type TerminalLiveInputSendOutcome
+} from './terminal-live-input-sender'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 
 const LIVE_INPUT_GENERATION = Symbol('live-input-generation')
@@ -21,6 +25,25 @@ function createDeferredBoolean(): DeferredBoolean {
     resolvePromise = resolve
   })
   return { promise, resolve: resolvePromise }
+}
+
+function createDeferredOutcome(): {
+  promise: Promise<TerminalLiveInputSendOutcome>
+  resolve: (outcome: TerminalLiveInputSendOutcome) => void
+} {
+  let resolvePromise: (outcome: TerminalLiveInputSendOutcome) => void = () => undefined
+  const promise = new Promise<TerminalLiveInputSendOutcome>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
+
+async function sendTerminalLiveInputAccepted(
+  senderRef: RefObject<TerminalLiveInputSender>,
+  handle: string,
+  bytes: string
+): Promise<boolean> {
+  return isTerminalLiveInputSendAccepted(await senderRef.current(handle, bytes))
 }
 
 function suppressReactTestRendererDeprecationWarning(): () => void {
@@ -49,7 +72,9 @@ it('reserves a slow kana boundary before a newer live-input generation', async (
     current: async (_handle, bytes) => {
       sent.push(bytes)
       sendCount += 1
-      return sendCount === 1 ? firstSend.promise : true
+      return sendCount === 1
+        ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
+        : 'accepted'
     }
   }
   const captures: string[] = []
@@ -86,7 +111,7 @@ it('reserves a slow kana boundary before a newer live-input generation', async (
 
   handlers.applyLiveInputMirror(activeHandle, 'つ')
   const firstBoundary = handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
   )
   await vi.waitFor(() => expect(sent).toEqual(['つ']))
   expect(captures.at(-1)).toBe('')
@@ -99,7 +124,7 @@ it('reserves a slow kana boundary before a newer live-input generation', async (
   await vi.waitFor(() => expect(sent).toEqual(['つ', '\r', 'か']))
 
   await handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
   )
   expect(sent).toEqual(['つ', '\r', 'か', 'き', '\r'])
   act(() => renderer?.unmount())
@@ -113,7 +138,7 @@ it('preserves new kana when an old terminal boundary arrives late', async () => 
     current: new Set(['terminal-a', 'terminal-b'])
   }
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
-    current: vi.fn(async () => true)
+    current: vi.fn(async () => 'accepted')
   }
   const captures: string[] = []
   let handlers: ReturnType<typeof useTerminalLivePendingInputFlush<string>> | null = null
@@ -175,7 +200,9 @@ it('cancels queued terminal sends when the hook unmounts', async () => {
     current: async (_handle, bytes) => {
       sent.push(bytes)
       sendCount += 1
-      return sendCount === 1 ? firstSend.promise : true
+      return sendCount === 1
+        ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
+        : 'accepted'
     }
   }
   let handlers: ReturnType<typeof useTerminalLivePendingInputFlush<string>> | null = null
@@ -211,7 +238,7 @@ it('cancels queued terminal sends when the hook unmounts', async () => {
 
   handlers.applyLiveInputMirror(activeHandle, 'か')
   const boundary = handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
   )
   await vi.waitFor(() => expect(sent).toEqual(['か']))
   handlers.applyLiveInputMirror(activeHandle, 'き')
@@ -238,7 +265,9 @@ it('cancels queued terminal boundaries when the connection drops', async () => {
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return sent.length === 1 ? firstSend.promise : true
+      return sent.length === 1
+        ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
+        : 'accepted'
     }
   }
   let handlers: ReturnType<typeof useTerminalLivePendingInputFlush<string>> | null = null
@@ -274,7 +303,7 @@ it('cancels queued terminal boundaries when the connection drops', async () => {
 
   handlers.applyLiveInputMirror(activeHandle, 'か')
   const boundary = handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
   )
   await vi.waitFor(() => expect(sent).toEqual(['か']))
 
@@ -298,7 +327,9 @@ it('invalidates dependent mirror deltas after a rejected current-generation send
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return sent.length === 1 ? firstSend.promise : true
+      return sent.length === 1
+        ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
+        : 'accepted'
     }
   }
   const captures: string[] = []
@@ -335,20 +366,74 @@ it('invalidates dependent mirror deltas after a rejected current-generation send
 
   handlers.applyLiveInputMirror(activeHandle, 'かき')
   handlers.applyLiveInputMirror(activeHandle, 'かきく')
-  const staleBoundary = handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
-  )
+  captures.push('かきく')
   await vi.waitFor(() => expect(sent).toEqual(['か']))
 
   firstSend.resolve(false)
-  await expect(staleBoundary).resolves.toBe(false)
+  await vi.waitFor(() => expect(handlers.sentLiveInputTextRef.current).toBe(''))
   expect(sent).toEqual(['か'])
-  expect(captures.at(-1)).toBe('')
+  expect(captures.at(-1)).toBe('かきく')
 
-  handlers.applyLiveInputMirror(activeHandle, 'さし')
   await handlers.runLiveInputBoundary(activeHandle, () =>
-    sendLiveTerminalInputRef.current(activeHandle, '\r')
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
   )
-  expect(sent).toEqual(['か', 'さ', 'し', '\r'])
+  expect(sent).toEqual(['か', 'かきく', '\r'])
+  act(() => renderer?.unmount())
+})
+
+it('clears an ambiguous mirror field and never replays it', async () => {
+  const activeHandle = 'terminal-a'
+  const deferredOutcome = createDeferredOutcome()
+  const sent: string[] = []
+  const captures: string[] = []
+  const onDeliveryUnknown = vi.fn()
+  const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
+    current: async (_handle, bytes) => {
+      sent.push(bytes)
+      return sent.length === 1 ? deferredOutcome.promise : 'accepted'
+    }
+  }
+  let handlers: ReturnType<typeof useTerminalLivePendingInputFlush<string>> | null = null
+  let renderer: ReactTestRenderer | null = null
+
+  function Harness(): null {
+    handlers = useTerminalLivePendingInputFlush({
+      activeHandleRef: { current: activeHandle },
+      activeSessionTabTypeRef: { current: 'terminal' },
+      inputStateReady: true,
+      liveInputRef: { current: null },
+      liveInputGeneration: LIVE_INPUT_GENERATION,
+      liveInputProducerGeneration: LIVE_INPUT_PRODUCER_GENERATION,
+      liveInputScope: 'pending-flush-unknown-mirror',
+      liveInputTerminalHandlesRef: { current: new Set([activeHandle]) },
+      onDeliveryUnknown,
+      sendLiveTerminalInputRef,
+      setLiveInputCapture: (text) => captures.push(text)
+    })
+    return null
+  }
+
+  const restoreConsoleError = suppressReactTestRendererDeprecationWarning()
+  try {
+    act(() => {
+      renderer = create(createElement(Harness))
+    })
+  } finally {
+    restoreConsoleError()
+  }
+  if (!handlers || !renderer) {
+    throw new Error('terminal live pending-input hook did not render')
+  }
+
+  handlers.applyLiveInputMirror(activeHandle, 'かき')
+  await vi.waitFor(() => expect(sent).toEqual(['か']))
+  deferredOutcome.resolve('unknown')
+  await vi.waitFor(() => expect(onDeliveryUnknown).toHaveBeenCalledOnce())
+
+  expect(captures.at(-1)).toBe('')
+  await handlers.runLiveInputBoundary(activeHandle, () =>
+    sendTerminalLiveInputAccepted(sendLiveTerminalInputRef, activeHandle, '\r')
+  )
+  expect(sent).toEqual(['か', '\r'])
   act(() => renderer?.unmount())
 })

@@ -51,7 +51,9 @@ function createOwnershipHarness() {
       sendLiveTerminalInputRef: {
         current: async (_handle, bytes) => {
           sent.push(bytes)
-          return sent.length === 1 ? firstSend.promise : true
+          return sent.length === 1
+            ? firstSend.promise.then((sent) => (sent ? 'accepted' : 'rejected'))
+            : 'accepted'
         }
       } as RefObject<TerminalLiveInputSender>,
       setLiveInputCapture: () => undefined

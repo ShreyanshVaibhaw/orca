@@ -7,7 +7,10 @@ import {
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { sendMobileTerminalLiveInput } from './mobile-terminal-live-input-send'
-import type { TerminalLiveInputBoundarySender } from './terminal-live-input-sender'
+import {
+  isTerminalLiveInputSendAccepted,
+  type TerminalLiveInputBoundarySender
+} from './terminal-live-input-sender'
 
 type TerminalGestureInputQueue = {
   bytes: string
@@ -106,7 +109,7 @@ export function useTerminalGestureInputQueue({
             activeSessionTabType: activeSessionTabTypeRef.current,
             text: queued.bytes,
             deviceToken: deviceTokenRef.current
-          })
+          }).then(isTerminalLiveInputSendAccepted)
         })
       } catch {
         // Transient failure

@@ -84,6 +84,7 @@ function createAccessoryInputCommitHarness({
   const activeHandle = 'terminal-a'
   const heldLiveInputTextRef: RefObject<string> = { current: heldText }
   const sentLiveInputTextRef: RefObject<string> = { current: sentText }
+  const currentLiveInputFieldTextRef: RefObject<string> = { current: sentText + heldText }
   const pendingLiveInputHandleRef: RefObject<string | null> = { current: pendingHandle }
   const liveInputRef: RefObject<TextInput | null> = { current: null }
   const liveInputTerminalHandles = new Set(liveInputActive ? [activeHandle] : [])
@@ -91,7 +92,7 @@ function createAccessoryInputCommitHarness({
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return sendResult
+      return sendResult ? 'accepted' : 'rejected'
     }
   }
   const applyLiveInputMirror = vi.fn((_handle: string, _fieldText: string) => {})
@@ -115,6 +116,7 @@ function createAccessoryInputCommitHarness({
       activeHandle,
       applyLiveInputMirror,
       clearPendingLiveInputCommit,
+      currentLiveInputFieldTextRef,
       heldLiveInputTextRef,
       isLiveInputProducerCurrent: () =>
         typeof producerCurrent === 'function' ? producerCurrent() : producerCurrent,

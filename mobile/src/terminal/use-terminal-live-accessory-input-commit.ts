@@ -9,6 +9,7 @@ import type {
   TerminalLiveInputBoundarySender,
   TerminalLiveInputSender
 } from './terminal-live-input-sender'
+import { isTerminalLiveInputSendAccepted } from './terminal-live-input-sender'
 
 export type TerminalLiveAccessoryInputCommitResult =
   | { readonly kind: 'allow-raw' }
@@ -30,6 +31,7 @@ type TerminalLiveAccessoryInputCommitOptions = {
   readonly activeHandle: string | null
   readonly applyLiveInputMirror: (handle: string, fieldText: string) => void
   readonly clearPendingLiveInputCommit: () => void
+  readonly currentLiveInputFieldTextRef: RefObject<string>
   readonly heldLiveInputTextRef: RefObject<string>
   readonly isLiveInputProducerCurrent: () => boolean
   readonly liveInputRef: RefObject<TextInput | null>
@@ -46,6 +48,7 @@ export function useTerminalLiveAccessoryInputCommit({
   activeHandle,
   applyLiveInputMirror,
   clearPendingLiveInputCommit,
+  currentLiveInputFieldTextRef,
   heldLiveInputTextRef,
   isLiveInputProducerCurrent,
   liveInputRef,
@@ -82,20 +85,23 @@ export function useTerminalLiveAccessoryInputCommit({
       }
       const heldText = ownsPendingState ? heldLiveInputTextRef.current : ''
       const sentText = ownsPendingState ? sentLiveInputTextRef.current : ''
+      const fieldText = ownsPendingState ? currentLiveInputFieldTextRef.current : ''
       const decision = getTerminalLiveAccessoryBytesDecision({ ...input, heldText, sentText })
       switch (decision.kind) {
         case 'send-now':
         case 'commit-held-then-send':
-          await runLiveInputBoundary(activeHandle, () =>
+          await runLiveInputBoundary(activeHandle, async () =>
             isInputCurrent()
-              ? sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
-              : Promise.resolve(false)
+              ? isTerminalLiveInputSendAccepted(
+                  await sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
+                )
+              : false
           )
           return { kind: 'handled' }
         case 'local-edit': {
           const editedText = getTerminalLiveAccessoryLocalEditText({
             localEdit: decision.localEdit,
-            fieldText: sentText + heldText
+            fieldText
           })
           // Why: accessory buttons do not emit native TextInput edits, so the
           // field is edited here and the mirror diff syncs the PTY echo.
@@ -113,6 +119,7 @@ export function useTerminalLiveAccessoryInputCommit({
       activeHandle,
       applyLiveInputMirror,
       clearPendingLiveInputCommit,
+      currentLiveInputFieldTextRef,
       heldLiveInputTextRef,
       isLiveInputProducerCurrent,
       liveInputRef,

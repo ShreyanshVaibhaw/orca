@@ -5,6 +5,7 @@ import type {
   TerminalLiveInputBoundarySender,
   TerminalLiveInputSender
 } from './terminal-live-input-sender'
+import { isTerminalLiveInputSendAccepted } from './terminal-live-input-sender'
 import { normalizeTerminalTextInput } from './terminal-text-input-normalization'
 import { useTerminalLivePendingInputFlush } from './use-terminal-live-pending-input-flush'
 import {
@@ -29,6 +30,7 @@ type TerminalLiveInputCommitOptions<TTabType extends string> = {
   readonly liveInputScope: string
   readonly liveInputTerminalHandles: ReadonlySet<string>
   readonly liveInputTerminalHandlesRef: RefObject<Set<string>>
+  readonly onDeliveryUnknown?: () => void
   readonly sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender>
   readonly setLiveInputCapture: (text: string) => void
 }
@@ -54,6 +56,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   liveInputScope,
   liveInputTerminalHandles,
   liveInputTerminalHandlesRef,
+  onDeliveryUnknown,
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLiveInputCommitOptions<TTabType>): TerminalLiveInputCommitHandlers {
@@ -77,6 +80,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   const {
     applyLiveInputMirror,
     clearPendingLiveInputCommit,
+    currentLiveInputFieldTextRef,
     heldLiveInputTextRef,
     isLiveInputProducerCurrent,
     pendingLiveInputHandleRef,
@@ -93,6 +97,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     liveInputProducerGeneration,
     liveInputScope,
     liveInputTerminalHandlesRef,
+    onDeliveryUnknown,
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
@@ -167,7 +172,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
       const decision = getTerminalLiveSpecialKeyDecision({
         key: event.nativeEvent.key,
         heldText: ownsPendingState ? heldLiveInputTextRef.current : '',
-        sentText: ownsPendingState ? sentLiveInputTextRef.current : ''
+        sentText: ownsPendingState ? currentLiveInputFieldTextRef.current : ''
       })
       switch (decision.kind) {
         case 'ignore':
@@ -175,8 +180,10 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
           return
         case 'send-now':
         case 'commit-held-then-send':
-          void runLiveInputBoundary(activeHandle, () =>
-            sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
+          void runLiveInputBoundary(activeHandle, async () =>
+            isTerminalLiveInputSendAccepted(
+              await sendLiveTerminalInputRef.current(activeHandle, decision.bytes)
+            )
           )
           return
         default:
@@ -186,6 +193,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     [
       activeHandle,
       clearPendingLiveInputCommit,
+      currentLiveInputFieldTextRef,
       isLiveInputProducerCurrent,
       liveInputTerminalHandles,
       runLiveInputBoundary,
@@ -197,6 +205,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     activeHandle,
     applyLiveInputMirror,
     clearPendingLiveInputCommit,
+    currentLiveInputFieldTextRef,
     heldLiveInputTextRef,
     isLiveInputProducerCurrent,
     liveInputRef,
@@ -217,8 +226,8 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
     ) {
       return
     }
-    void runLiveInputBoundary(activeHandle, () =>
-      sendLiveTerminalInputRef.current(activeHandle, '\r')
+    void runLiveInputBoundary(activeHandle, async () =>
+      isTerminalLiveInputSendAccepted(await sendLiveTerminalInputRef.current(activeHandle, '\r'))
     )
   }, [
     activeHandle,

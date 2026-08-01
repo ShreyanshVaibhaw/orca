@@ -65,7 +65,7 @@ function createTerminalLiveInputCommitHarness({
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
     current: async (_handle, bytes) => {
       sent.push(bytes)
-      return currentSendResult
+      return currentSendResult ? 'accepted' : 'rejected'
     }
   }
   // Refs never re-render; only these variables re-run the hook's clear effects.
@@ -255,6 +255,37 @@ describe('terminal live input commit hook', () => {
 
     // Then: the held commit went out but was not accepted, so no \r follows
     await vi.waitFor(() => expect(sent).toEqual(['한']))
+  })
+
+  it('retains definitely rejected kana and retries the exact missing field on submit', async () => {
+    const harness = createTerminalLiveInputCommitHarness({ sendResult: false })
+    harness.handlers.handleLiveInputChange('かき')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か']))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(harness.captures.at(-1)).toBe('かき')
+    harness.setSendResult(true)
+    harness.handlers.handleLiveInputSubmit()
+
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'かき', '\r']))
+    harness.unmount()
+  })
+
+  it('does not duplicate an accepted kana prefix when a later delta retries', async () => {
+    const harness = createTerminalLiveInputCommitHarness()
+    harness.handlers.handleLiveInputChange('かき')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か']))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    harness.setSendResult(false)
+    harness.handlers.handleLiveInputChange('かきく')
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'き']))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    harness.setSendResult(true)
+    harness.handlers.handleLiveInputSubmit()
+    await vi.waitFor(() => expect(harness.sent).toEqual(['か', 'き', 'きく', '\r']))
+    harness.unmount()
   })
 
   it('Given ASCII typing When changes arrive Then mirrors immediately', async () => {
@@ -538,7 +569,7 @@ describe('terminal live input commit hook', () => {
     const activeSessionTabTypeRef = { current: 'terminal' }
     const liveInputRef: RefObject<TextInput | null> = { current: null }
     const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
-      current: async () => true
+      current: async () => 'accepted'
     }
     const setLiveInputCapture = vi.fn()
     const captures = new Map<string, ReturnType<typeof useTerminalLiveInputCommit<string>>>()

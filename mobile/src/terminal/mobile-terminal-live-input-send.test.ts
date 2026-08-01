@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
+import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import { sendMobileTerminalLiveInput } from './mobile-terminal-live-input-send'
 
 function captureClient() {
@@ -26,7 +28,7 @@ describe('mobile terminal live input send', () => {
 
     await expect(
       sendMobileTerminalLiveInput({ ...CURRENT_SEND, client, activeSessionTabType: null })
-    ).resolves.toBe(true)
+    ).resolves.toBe('accepted')
     expect(sendRequest).toHaveBeenCalledWith(
       'terminal.send',
       {
@@ -47,8 +49,31 @@ describe('mobile terminal live input send', () => {
     const { client, sendRequest } = captureClient()
 
     await expect(sendMobileTerminalLiveInput({ ...CURRENT_SEND, ...state, client })).resolves.toBe(
-      false
+      'rejected'
     )
     expect(sendRequest).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['host rejection', { ok: true, result: { send: { accepted: false } } }, false],
+    ['ordinary failure', new Error('not connected'), true]
+  ])('reports %s as definitely rejected', async (_label, result, rejects) => {
+    const sendRequest = rejects
+      ? vi.fn().mockRejectedValue(result)
+      : vi.fn().mockResolvedValue(result)
+    const client = { sendRequest } as unknown as Pick<RpcClient, 'sendRequest'>
+
+    await expect(sendMobileTerminalLiveInput({ ...CURRENT_SEND, client })).resolves.toBe('rejected')
+  })
+
+  it.each([
+    ['delivery-unknown failure', markRpcDeliveryUnknown(new Error('response lost'))],
+    ['logical cutover', new LogicalClientCutoverError()]
+  ])('reports %s without allowing automatic replay', async (_label, error) => {
+    const client = {
+      sendRequest: vi.fn().mockRejectedValue(error)
+    } as unknown as Pick<RpcClient, 'sendRequest'>
+
+    await expect(sendMobileTerminalLiveInput({ ...CURRENT_SEND, client })).resolves.toBe('unknown')
   })
 })

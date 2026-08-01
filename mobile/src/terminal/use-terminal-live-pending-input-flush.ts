@@ -7,7 +7,6 @@ import type {
 import {
   buildTerminalLiveMirrorPayload,
   computeTerminalLiveMirrorStep,
-  getTerminalLiveHeldCommitPolicy,
   TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS
 } from './terminal-live-composition-mirror'
 import {
@@ -16,6 +15,9 @@ import {
   waitForTerminalLivePendingFlush
 } from './terminal-live-pending-flush-state'
 import { queueTerminalLiveMirrorPayloadSend } from './terminal-live-mirror-payload-send'
+import { useTerminalLiveInputDisconnectReconcile } from './use-terminal-live-input-disconnect-reconcile'
+
+const ignoreTerminalLiveInputDeliveryUnknown = (): void => undefined
 
 type TerminalLivePendingInputFlushOptions<TTabType extends string> = {
   readonly activeHandleRef: RefObject<string | null>
@@ -26,6 +28,7 @@ type TerminalLivePendingInputFlushOptions<TTabType extends string> = {
   readonly liveInputProducerGeneration: symbol
   readonly liveInputScope: string
   readonly liveInputTerminalHandlesRef: RefObject<Set<string>>
+  readonly onDeliveryUnknown?: () => void
   readonly sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender>
   readonly setLiveInputCapture: (text: string) => void
 }
@@ -33,6 +36,7 @@ type TerminalLivePendingInputFlushOptions<TTabType extends string> = {
 type TerminalLivePendingInputFlush = {
   readonly applyLiveInputMirror: (handle: string, fieldText: string) => void
   readonly clearPendingLiveInputCommit: () => void
+  readonly currentLiveInputFieldTextRef: RefObject<string>
   readonly heldLiveInputTextRef: RefObject<string>
   readonly isLiveInputProducerCurrent: () => boolean
   readonly pendingLiveInputHandleRef: RefObject<string | null>
@@ -51,6 +55,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   liveInputProducerGeneration,
   liveInputScope,
   liveInputTerminalHandlesRef,
+  onDeliveryUnknown = ignoreTerminalLiveInputDeliveryUnknown,
   sendLiveTerminalInputRef,
   setLiveInputCapture
 }: TerminalLivePendingInputFlushOptions<TTabType>): TerminalLivePendingInputFlush {
@@ -61,6 +66,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   const currentLiveInputGenerationRef = useRef(liveInputGeneration)
   const currentLiveInputProducerGenerationRef = useRef(liveInputProducerGeneration)
   const disposedRef = useRef(false)
+  const currentLiveInputFieldTextRef = useRef('')
   const heldLiveInputTextRef = useRef('')
   const sentLiveInputTextRef = useRef('')
   const pendingLiveInputHandleRef = useRef<string | null>(null)
@@ -79,6 +85,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
     clearHeldCommitTimer()
     heldLiveInputTextRef.current = ''
     sentLiveInputTextRef.current = ''
+    currentLiveInputFieldTextRef.current = ''
     pendingLiveInputHandleRef.current = null
   }, [clearHeldCommitTimer])
 
@@ -104,35 +111,19 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
     return waitForTerminalLivePendingFlush(pendingLiveInputFlushRef)
   }, [])
 
-  const reconcileLiveInputAfterDisconnect = useCallback(() => {
-    // Why: pre-disconnect sends must not release queued control bytes after recovery.
-    const hadPendingFlush = pendingLiveInputFlushRef.current !== null
-    lifecycleEpochRef.current += 1
-    pendingLiveInputFlushRef.current = null
-    const pendingHandle = pendingLiveInputHandleRef.current
-    const heldCodePoint = Array.from(heldLiveInputTextRef.current).at(-1)?.codePointAt(0)
-    const canPreserveUnsentKana =
-      pendingHandle !== null &&
-      pendingHandle === activeHandleRef.current &&
-      (activeSessionTabTypeRef.current === null ||
-        activeSessionTabTypeRef.current === 'terminal') &&
-      liveInputTerminalHandlesRef.current.has(pendingHandle) &&
-      sentLiveInputTextRef.current.length === 0 &&
-      !hadPendingFlush &&
-      heldCodePoint !== undefined &&
-      getTerminalLiveHeldCommitPolicy(heldCodePoint) === 'boundary'
-    if (canPreserveUnsentKana) {
-      clearHeldCommitTimer()
-      return
-    }
-    clearPendingLiveInputCommit()
-  }, [
+  // Why: pre-disconnect sends must not release queued control bytes after recovery.
+  const reconcileLiveInputAfterDisconnect = useTerminalLiveInputDisconnectReconcile({
     activeHandleRef,
     activeSessionTabTypeRef,
     clearHeldCommitTimer,
     clearPendingLiveInputCommit,
-    liveInputTerminalHandlesRef
-  ])
+    heldLiveInputTextRef,
+    lifecycleEpochRef,
+    liveInputTerminalHandlesRef,
+    pendingLiveInputFlushRef,
+    pendingLiveInputHandleRef,
+    sentLiveInputTextRef
+  })
 
   const runMirrorStep = useCallback(
     async (handle: string, fieldText: string, commitHeld: boolean): Promise<boolean> => {
@@ -156,7 +147,9 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         return false
       }
 
-      const step = computeTerminalLiveMirrorStep(sentLiveInputTextRef.current, fieldText, {
+      currentLiveInputFieldTextRef.current = fieldText
+      const rejectedSentText = sentLiveInputTextRef.current
+      const step = computeTerminalLiveMirrorStep(rejectedSentText, fieldText, {
         commitHeld
       })
       sentLiveInputTextRef.current = step.nextSentText
@@ -179,24 +172,30 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
           ) {
             return
           }
-          const heldField = sentLiveInputTextRef.current + heldLiveInputTextRef.current
-          void runMirrorStepRef.current(handle, heldField, true)
+          void runMirrorStepRef.current(handle, currentLiveInputFieldTextRef.current, true)
         }, TERMINAL_LIVE_HELD_SYLLABLE_COMMIT_DELAY_MS)
       }
 
       const payload = buildTerminalLiveMirrorPayload(step)
       return queueTerminalLiveMirrorPayloadSend({
         clearPendingLiveInputCommit,
+        clearHeldCommitTimer,
+        currentLiveInputFieldTextRef,
         currentLiveInputGenerationRef,
         disposedRef,
         handle,
+        heldLiveInputTextRef,
         inputScope: liveInputScope,
         lifecycleEpoch: lifecycleEpochRef.current,
         lifecycleEpochRef,
         liveInputGeneration,
+        onDeliveryUnknown,
         payload,
+        pendingLiveInputHandleRef,
         pendingLiveInputFlushRef,
+        rejectedSentText,
         sendLiveTerminalInputRef,
+        sentLiveInputTextRef,
         waitForPendingLiveInputFlush
       })
     },
@@ -208,6 +207,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       liveInputGeneration,
       liveInputScope,
       liveInputTerminalHandlesRef,
+      onDeliveryUnknown,
       resetMirrorState,
       sendLiveTerminalInputRef,
       waitForPendingLiveInputFlush
@@ -265,9 +265,9 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         return queueTerminalLiveBoundarySend(pendingLiveInputFlushRef, async () => false)
       }
 
-      const heldField = sentLiveInputTextRef.current + heldLiveInputTextRef.current
-      if (heldLiveInputTextRef.current.length > 0) {
-        void runMirrorStep(handle, heldField, true)
+      const fieldText = currentLiveInputFieldTextRef.current
+      if (heldLiveInputTextRef.current.length > 0 || fieldText !== sentLiveInputTextRef.current) {
+        void runMirrorStep(handle, fieldText, true)
       }
       const boundaryPromise = queueTerminalLiveBoundarySend(
         pendingLiveInputFlushRef,
@@ -300,6 +300,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
       }
       heldLiveInputTextRef.current = ''
       sentLiveInputTextRef.current = ''
+      currentLiveInputFieldTextRef.current = ''
       pendingLiveInputHandleRef.current = null
       pendingLiveInputFlushRef.current = null
     }
@@ -308,6 +309,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   return {
     applyLiveInputMirror,
     clearPendingLiveInputCommit,
+    currentLiveInputFieldTextRef,
     heldLiveInputTextRef,
     isLiveInputProducerCurrent: () =>
       inputStateReady &&

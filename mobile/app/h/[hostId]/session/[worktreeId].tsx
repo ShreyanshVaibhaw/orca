@@ -123,7 +123,11 @@ import {
   scheduleTerminalLiveInputFocus
 } from '../../../../src/terminal/terminal-live-input'
 import { dismissTerminalKeyboard } from '../../../../src/terminal/terminal-keyboard-dismiss'
-import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-live-input-sender'
+import type {
+  TerminalLiveInputSender,
+  TerminalLiveInputSendOutcome
+} from '../../../../src/terminal/terminal-live-input-sender'
+import { isTerminalLiveInputSendAccepted } from '../../../../src/terminal/terminal-live-input-sender'
 import { sendMobileTerminalLiveInput } from '../../../../src/terminal/mobile-terminal-live-input-send'
 import {
   mergeRejectedTerminalBufferedInput,
@@ -1012,7 +1016,7 @@ export default function SessionScreen() {
   const liveInputRef = useRef<TextInput>(null)
   const commandInputRef = useRef<TextInput>(null)
   const liveInputFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sendLiveTerminalInputRef = useRef<TerminalLiveInputSender>(async () => false)
+  const sendLiveTerminalInputRef = useRef<TerminalLiveInputSender>(async () => 'rejected')
   const sessionTabActionSheetKeyboardHideSubRef = useRef<ReturnType<
     typeof Keyboard.addListener
   > | null>(null)
@@ -1031,6 +1035,47 @@ export default function SessionScreen() {
   }, [terminalInputScope])
   const terminalInputStateScopeRef = useRef(terminalInputScope)
   const terminalInputStateReady = terminalInputStateScopeRef.current === terminalInputScope
+  const clearToastHideTimer = useCallback(() => {
+    if (!toastHideTimerRef.current) {
+      return
+    }
+    clearTimeout(toastHideTimerRef.current)
+    toastHideTimerRef.current = null
+  }, [])
+  const showToast = useCallback(
+    (message: string, durationMs = 1200) => {
+      const seq = toastSeqRef.current + 1
+      toastSeqRef.current = seq
+      clearToastHideTimer()
+      setToastMessage(message)
+      Animated.timing(toastOpacityRef.current, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true
+      }).start(({ finished }) => {
+        if (!finished || toastSeqRef.current !== seq) {
+          return
+        }
+        toastHideTimerRef.current = setTimeout(() => {
+          toastHideTimerRef.current = null
+          Animated.timing(toastOpacityRef.current, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true
+          }).start((result) => {
+            if (result.finished && toastSeqRef.current === seq) {
+              setToastMessage(null)
+            }
+          })
+        }, durationMs)
+      })
+    },
+    [clearToastHideTimer]
+  )
+  const showLiveInputDeliveryUnknown = useCallback(
+    () => showToast('Input delivery uncertain', 2000),
+    [showToast]
+  )
   const pendingActiveSessionTabIdRef = useRef<string | null>(null)
   const pendingActiveTerminalHandleRef = useRef<string | null>(null)
   // Why: remember the page id to activate its session tab once it syncs (bridge auto-activate flags only webContents, not the app-level active tab).
@@ -1077,6 +1122,7 @@ export default function SessionScreen() {
     liveInputScope: terminalInputScope,
     liveInputTerminalHandles,
     liveInputTerminalHandlesRef,
+    onDeliveryUnknown: showLiveInputDeliveryUnknown,
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
@@ -1139,44 +1185,6 @@ export default function SessionScreen() {
     delayedActionTimersRef.current.add(timer)
   }, [])
 
-  const clearToastHideTimer = useCallback(() => {
-    if (!toastHideTimerRef.current) {
-      return
-    }
-    clearTimeout(toastHideTimerRef.current)
-    toastHideTimerRef.current = null
-  }, [])
-
-  const showToast = useCallback(
-    (message: string, durationMs = 1200) => {
-      const seq = toastSeqRef.current + 1
-      toastSeqRef.current = seq
-      clearToastHideTimer()
-      setToastMessage(message)
-      Animated.timing(toastOpacityRef.current, {
-        toValue: 1,
-        duration: 150,
-        useNativeDriver: true
-      }).start(({ finished }) => {
-        if (!finished || toastSeqRef.current !== seq) {
-          return
-        }
-        toastHideTimerRef.current = setTimeout(() => {
-          toastHideTimerRef.current = null
-          Animated.timing(toastOpacityRef.current, {
-            toValue: 0,
-            duration: 200,
-            useNativeDriver: true
-          }).start((result) => {
-            if (result.finished && toastSeqRef.current === seq) {
-              setToastMessage(null)
-            }
-          })
-        }, durationMs)
-      })
-    },
-    [clearToastHideTimer]
-  )
   const nativeChatScopeKey = mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId)
   const nativeChatSendError = useMobileNativeChatSendError({
     scopeKey: nativeChatScopeKey,
@@ -1228,7 +1236,9 @@ export default function SessionScreen() {
           ),
         notifyInserted: () => showToast('Dictation inserted'),
         sendLiveText: (handle, transcript) =>
-          sendLiveInputExternalBoundary(handle, () => sendLiveTerminalInput(handle, transcript)),
+          sendLiveInputExternalBoundary(handle, async () =>
+            isTerminalLiveInputSendAccepted(await sendLiveTerminalInput(handle, transcript))
+          ),
         text
       })
     },
@@ -3041,15 +3051,15 @@ export default function SessionScreen() {
   }
 
   const sendLiveTerminalInput = useCallback(
-    async (handle: string, bytes: string): Promise<boolean> => {
+    async (handle: string, bytes: string): Promise<TerminalLiveInputSendOutcome> => {
       const text = normalizeTerminalTextInput(bytes)
       if (text.length === 0) {
-        return false
+        return 'rejected'
       }
       if (!isTerminalLiveInputWithinByteLimit(text)) {
         triggerError()
         showToast('Input too large (max 256 KiB)', 1500)
-        return false
+        return 'rejected'
       }
       // Why: callers suppress follow-up controls/toasts when this live send is stale.
       // Why: live-mirror deltas queued behind a dying send drain into the connect
