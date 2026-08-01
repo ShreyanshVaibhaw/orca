@@ -90,6 +90,100 @@ it('publishes only sleeping records changed by a checkpoint and skips no-op chec
   }
 })
 
+it('publishes agent-status topology only after committed changes', () => {
+  const store = createTestStore()
+  const changes: { paneKeys?: readonly string[]; worktreeIds?: readonly string[] }[] = []
+  const unsubscribe = onTerminalPaneAuthorityTopologyChange((change) => changes.push(change))
+  const launchPaneKey = 'tab-launch:leaf-launch'
+  const recordPaneKey = 'tab-record:leaf-record'
+  const statusPaneKey = 'tab-status:leaf-status'
+  const providerSession = { key: 'session_id' as const, id: 'session-record' }
+
+  try {
+    const launchConfig = { agentArgs: '', agentEnv: {} }
+    const launchMetadata = { agentType: 'codex' as const, tabId: 'tab-launch' }
+    store.getState().registerAgentLaunchConfig(launchPaneKey, launchConfig, launchMetadata)
+    expect(changes.splice(0)).toEqual([{ paneKeys: [launchPaneKey] }])
+
+    store.getState().registerAgentLaunchConfig(launchPaneKey, launchConfig, launchMetadata)
+    expect(changes.splice(0)).toEqual([])
+
+    store.getState().clearSleepingAgentSessionsByPaneKey([launchPaneKey])
+    expect(changes.splice(0)).toEqual([{ paneKeys: [launchPaneKey] }])
+    store.getState().clearSleepingAgentSessionsByPaneKey([launchPaneKey])
+    expect(changes.splice(0)).toEqual([])
+
+    store
+      .getState()
+      .recordAgentProviderSession('tab-missing:leaf-missing', 'codex', providerSession, {
+        updatedAt: 10
+      })
+    expect(changes.splice(0)).toEqual([])
+
+    store
+      .getState()
+      .recordAgentProviderSession(
+        recordPaneKey,
+        'codex',
+        providerSession,
+        { updatedAt: 10 },
+        { tabId: 'tab-record', worktreeId: 'worktree-record' }
+      )
+    expect(changes.splice(0)).toEqual([{ paneKeys: [recordPaneKey] }])
+
+    store
+      .getState()
+      .recordAgentProviderSession(
+        recordPaneKey,
+        'codex',
+        providerSession,
+        { updatedAt: 9 },
+        { tabId: 'tab-record', worktreeId: 'worktree-record' }
+      )
+    expect(changes.splice(0)).toEqual([])
+
+    store.getState().setSleepingAgentAutomaticResumeBlocked(recordPaneKey, true)
+    expect(changes.splice(0)).toEqual([{ paneKeys: [recordPaneKey] }])
+    store.getState().setSleepingAgentAutomaticResumeBlocked(recordPaneKey, true)
+    expect(changes.splice(0)).toEqual([])
+
+    store
+      .getState()
+      .setAgentStatus(
+        statusPaneKey,
+        { state: 'working', prompt: 'parent turn', agentType: 'codex' },
+        'Codex',
+        { updatedAt: 100, stateStartedAt: 100 }
+      )
+    expect(changes.splice(0)).toEqual([{ paneKeys: [statusPaneKey] }])
+
+    for (let index = 0; index < 100; index += 1) {
+      store
+        .getState()
+        .setAgentStatus(
+          statusPaneKey,
+          { state: 'working', prompt: 'stale', agentType: 'codex' },
+          'Codex',
+          { updatedAt: 99, stateStartedAt: 99 }
+        )
+    }
+    expect(changes.splice(0)).toEqual([])
+
+    store
+      .getState()
+      .setAgentStatus(
+        statusPaneKey,
+        { state: 'done', prompt: 'nested child', agentType: 'claude' },
+        'Claude',
+        { updatedAt: 101, stateStartedAt: 101 }
+      )
+    expect(changes.splice(0)).toEqual([])
+    expect(store.getState().agentStatusByPaneKey[statusPaneKey]?.state).toBe('working')
+  } finally {
+    unsubscribe()
+  }
+})
+
 it('publishes only worktrees actually purged from a removed runtime host', () => {
   const store = createTestStore()
   const removedWorktreeId = 'repo-runtime::/removed'

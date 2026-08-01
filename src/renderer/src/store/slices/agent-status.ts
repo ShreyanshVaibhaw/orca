@@ -1191,6 +1191,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       return
     }
     const uniquePaneKeys = new Set(paneKeys)
+    let topologyChanged = false
     set((s) => {
       let nextSleeping = s.sleepingAgentSessionsByPaneKey
       let nextLaunchConfigs = s.agentLaunchConfigByPaneKey
@@ -1214,12 +1215,15 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       ) {
         return s
       }
+      topologyChanged = true
       return {
         sleepingAgentSessionsByPaneKey: nextSleeping,
         agentLaunchConfigByPaneKey: nextLaunchConfigs
       }
     })
-    publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...uniquePaneKeys] })
+    if (topologyChanged) {
+      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...uniquePaneKeys] })
+    }
   }
 
   return {
@@ -1456,6 +1460,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     },
 
     registerAgentLaunchConfig: (paneKey, launchConfig, metadata) => {
+      let topologyChanged = false
       set((s) => {
         const copiedLaunchConfig = copyLaunchConfig(launchConfig)
         const nextRegistryEntry: AgentLaunchConfigRegistryEntry = {
@@ -1510,6 +1515,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         if (!registryChanged && nextSleepingAgentSessions === s.sleepingAgentSessionsByPaneKey) {
           return s
         }
+        topologyChanged = true
         return {
           ...(registryChanged
             ? {
@@ -1524,7 +1530,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             : {})
         }
       })
-      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      if (topologyChanged) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      }
     },
     getAgentLaunchConfigForStatusEntry: (entry) => getLaunchConfigForEntry(get(), entry),
     getAgentLaunchConfigForStatusMetadata: (metadata) =>
@@ -1555,6 +1563,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         return
       }
       let removedLiveStatus = false
+      let topologyChanged = false
       set((s) => {
         const existingStatus = s.agentStatusByPaneKey[paneKey]
         const existingRecord = s.sleepingAgentSessionsByPaneKey[paneKey]
@@ -1646,6 +1655,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           nextLaunchConfigs = { ...nextLaunchConfigs }
           delete nextLaunchConfigs[paneKey]
         }
+        topologyChanged = true
         return {
           agentStatusByPaneKey: nextLive,
           retainedAgentsByPaneKey: nextRetained,
@@ -1669,7 +1679,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       if (removedLiveStatus) {
         queueMicrotask(() => freshness.schedule())
       }
-      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      if (topologyChanged) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      }
     },
 
     setAgentStatus: (paneKey, payload, terminalTitle, timing, routing, metadata) => {
@@ -1687,6 +1699,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
       }
       let completionRefreshWorktreeId: string | null = null
       let suppressedInheritedTerminalStatus = false
+      let topologyChanged = false
       const changedSleepingPaneKeys = new Set([paneKey])
       const generatedTitleEntry: { current: AgentStatusEntry | null } = { current: null }
       set((s) => {
@@ -2036,6 +2049,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           nextSleepingAgentSessions = removePaneKeys(nextSleepingAgentSessions, evictedPaneKeySet)
           nextLaunchConfigs = removePaneKeys(nextLaunchConfigs, evictedPaneKeySet)
         }
+        topologyChanged = true
         return {
           agentStatusByPaneKey: nextLive,
           retainedAgentsByPaneKey: nextRetainedAgents,
@@ -2053,7 +2067,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
               : s.sortEpoch
         }
       })
-      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...changedSleepingPaneKeys] })
+      if (topologyChanged) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [...changedSleepingPaneKeys] })
+      }
       if (suppressedInheritedTerminalStatus) {
         return
       }
@@ -2845,6 +2861,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     clearSleepingAgentSession: (paneKey) => clearSleepingAgentSessionsByPaneKey([paneKey]),
     clearSleepingAgentSessionsByPaneKey,
     setSleepingAgentAutomaticResumeBlocked: (paneKey, blocked) => {
+      let topologyChanged = false
       set((s) => {
         const current = s.sleepingAgentSessionsByPaneKey[paneKey]
         if (
@@ -2861,6 +2878,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         } else {
           delete next.automaticResumeBlockedBy
         }
+        topologyChanged = true
         return {
           sleepingAgentSessionsByPaneKey: {
             ...s.sleepingAgentSessionsByPaneKey,
@@ -2868,7 +2886,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           }
         }
       })
-      publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      if (topologyChanged) {
+        publishTerminalPaneAuthorityTopologyChange({ paneKeys: [paneKey] })
+      }
     },
 
     clearSleepingAgentSessionsByWorktree: (worktreeId) => {
