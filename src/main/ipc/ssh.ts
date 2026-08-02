@@ -247,6 +247,22 @@ async function teardownActiveSshSession(
   }
 }
 
+// Why: a dropped session must detach, not just leave activeSessions — detach() releases the SSH PTY
+// consumer identity so the next connect reclaims its owner lease instead of minting a new one.
+function abandonFailedSshSession(targetId: string, session: SshRelaySession): void {
+  try {
+    session.detach()
+  } catch (error) {
+    // Why: a teardown throw must not mask the connect error the caller is about to rethrow.
+    console.warn(
+      `[ssh] Failed to detach abandoned session for ${targetId}: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+  if (activeSessions.get(targetId) === session) {
+    activeSessions.delete(targetId)
+  }
+}
+
 function relayGracePeriodForTarget(target: SshTarget | null | undefined): number | undefined {
   return target?.relayGracePeriodSeconds
 }
@@ -1095,7 +1111,7 @@ export function registerSshHandlers(
       }
       // Why: clear this failed connect's flag so a later non-prompting connect isn't deferred.
       credentialRequestedForTarget.delete(targetId)
-      activeSessions.delete(targetId)
+      abandonFailedSshSession(targetId, session)
       clearRelayLostBackoff(targetId)
       clearRelayStateOverride(targetId)
       broadcastSshState(getCurrentMainWindow, targetId, {
@@ -1133,7 +1149,7 @@ export function registerSshHandlers(
       if (!ownsSession()) {
         throw connectCancelledError()
       }
-      activeSessions.delete(targetId)
+      abandonFailedSshSession(targetId, session)
       clearRelayLostBackoff(targetId)
       await connectionManager!.disconnect(targetId)
       throw err
