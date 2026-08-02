@@ -3818,8 +3818,11 @@ export class Store {
     const attempt = prev.then(() => this.writeToDiskAsync())
     // Why: the tracked promise must never reject — a rejection would poison the next chained write
     // and surface through waitForPendingWrite(); the caller still sees failures via `attempt`.
+    // Log here so a write failure leaves a trace even if a future caller drops `attempt`.
     const tracked = attempt
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[persistence] Failed to write state:', err)
+      })
       .finally(() => {
         if (this.pendingWrite === tracked) {
           this.pendingWrite = null
@@ -3999,7 +4002,7 @@ export class Store {
     const asyncWriteWasInFlight = this.pendingWrite !== null
     // Why: bump writeGeneration so an in-flight async write skips its rename and can't overwrite this sync write.
     this.writeGeneration++
-    this.pendingWrite = null
+    // Why: later async flushes must remain serialized behind the invalidated writer.
     this.writeToDiskSync({
       force: asyncWriteWasInFlight,
       skipBackupRotation: this.backupRotationInFlight
@@ -6792,13 +6795,10 @@ export class Store {
   }
 
   private async flushSshPtyConsumerRecovery(): Promise<void> {
-    try {
-      // Why: ownership must be durable before relay setup continues, but this runs on the live
-      // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
-      await this.flushAsync()
-    } catch (err) {
-      console.error('[persistence] Failed to flush SSH PTY consumer recovery:', err)
-    }
+    // Why: ownership must be durable before relay setup continues, but this runs on the live
+    // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
+    // Why not caught here: the failure must reach the awaiting caller; flushAsync already logs it.
+    await this.flushAsync()
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────
@@ -6843,13 +6843,47 @@ export class Store {
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
+    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      this.flush()
+    }
+  }
+
+  async markSshRemotePtyLeasesAsync(
+    targetId: string,
+    state: SshRemotePtyLease['state']
+  ): Promise<void> {
+    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      await this.flushAsync()
+    }
+  }
+
+  async markSshRemotePtyLeasesAttachedAsync(
+    targetId: string,
+    ptyIds: readonly string[]
+  ): Promise<void> {
+    const relayPtyIds = new Set(
+      ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
+    )
+    if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
+      await this.flushAsync()
+    }
+  }
+
+  private updateSshRemotePtyLeaseStates(
+    targetId: string,
+    state: SshRemotePtyLease['state'],
+    ptyIds?: ReadonlySet<string>
+  ): boolean {
     const now = Date.now()
     let changed = false
     const shouldClearBindings = state === 'terminated' || state === 'expired'
     const leasesToClear: SshRemotePtyLease[] = []
     this.state.sshRemotePtyLeases ??= []
     for (const lease of this.state.sshRemotePtyLeases) {
-      if (lease.targetId !== targetId) {
+      if (lease.targetId !== targetId || (ptyIds && !ptyIds.has(lease.ptyId))) {
+        continue
+      }
+      if (state === 'attached' && (lease.state === 'terminated' || lease.state === 'expired')) {
         continue
       }
       if (state === 'detached' && lease.state !== 'attached') {
@@ -6872,9 +6906,7 @@ export class Store {
     const bindingsChanged = shouldClearBindings
       ? this.clearSshRemotePtyBindingsForLeases(targetId, leasesToClear)
       : false
-    if (changed || bindingsChanged) {
-      this.flush()
-    }
+    return changed || bindingsChanged
   }
 
   markSshRemotePtyLease(targetId: string, ptyId: string, state: SshRemotePtyLease['state']): void {
